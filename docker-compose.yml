@@ -1,0 +1,40 @@
+services:
+  loop:
+    build: .
+    init: true # PID1 ゾンビ刈り・シグナル処理
+    restart: unless-stopped # 最外の番人: コンテナが死んだら立ち上げ直す
+
+    # ── 自前 Docker エンジン(dind / B案)を動かすため ──
+    #   privileged が無いと内側 dockerd はカーネル機能(cgroup/iptables/overlay)を握れない。
+    #   ホストの docker.sock は渡さない＝breakout してもこの箱(=使い捨ての VM/EC2)内に留まる前提。
+    privileged: true
+
+    # ── ユーザー設定と秘密は .env に集約して丸ごと注入（単一ソース）──
+    #   TARGET_REPO_URL / BUILD_CMD / TEST_CMD / LINT_CMD /
+    #   GIT_USER_NAME / GIT_USER_EMAIL / TZ と、認証（GITHUB_APP_* または GH_TOKEN）をここから。
+    #   ※ .env は「変数置換」用にも自動で読まれるが、コンテナに入れるには env_file が必要。
+    env_file:
+      - .env
+
+    # ── 固定の内部配線だけ（ユーザーが触らない＝.env に置かない）──
+    environment:
+      - TARGET_REPO_DIR=/work/repo
+      - CLAUDE_CONFIG_DIR=/work/claude-home # Claudeサブスク認証を /work/claude-home に永続化
+
+    volumes:
+      # 状態・結果・ログ。ホストの ./app/.loop を直接バインド＝ホストから可視＆
+      # ホスト側 enqueue.sh もそのままドライバに届く（名前付きボリュームの隔離を回避）。
+      - ./app/.loop:/work/loop/.loop
+      # Claude のサブスク認証情報を永続化（初回 /login を毎回やらないため）
+      - claude-home:/work/claude-home
+      # 内側 dockerd のデータ領域。実FS(名前付きvol)に置いて overlay on overlay を回避し、
+      # イメージ層・ビルドキャッシュをコンテナ作り直しをまたいで永続させる。
+      - docker-lib:/var/lib/docker
+
+    # ── ネットワーク ──
+    #   open net 運用。egress allowlist を入れる場合はここで proxy / network を絞る。
+    #   （#2 の議論どおり、最低でも push 権限を loop/* に限定し main は branch protection で守る）
+
+volumes:
+  claude-home:
+  docker-lib: # 内側 dockerd の /var/lib/docker（イメージ層・ビルドキャッシュ）

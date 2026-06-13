@@ -1,0 +1,20 @@
+# ループの実行時状態（本体は app/ 配下に移動）
+app/.loop/queue/*
+app/.loop/processed/*
+app/.loop/blocked/*
+app/.loop/results/*
+app/.loop/done/*
+app/.loop/logs/*
+app/.loop/state/*
+app/.loop/awaiting/*
+app/.loop/memory/*
+app/.loop/outcomes/*
+!app/.loop/**/.gitkeep
+
+# 認証情報は絶対に置かない
+.env
+*.token
+*.pem
+claude-home/
+app/.loop/.gh-token
+app/.loop/.gh-installation-id

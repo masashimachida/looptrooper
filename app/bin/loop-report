@@ -1,0 +1,58 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────
+# loop-report ── Claude がタスク完了時に「最後に1回だけ」叩く報告コマンド。
+#   result file = sentinel + status + 出力 を1ファイルに統合して書く。
+#   freeform に JSON を書かせず、ここで整形を保証する（壊れた JSON を防ぐ）。
+#
+# 使い方:
+#   loop-report --task ID --status done|failed|blocked|skipped \
+#     [--branch B] [--pr URL] [--verify "build=pass,tests=pass,review=pass"] \
+#     [--summary "..."] [--next "..."] [--reason "..."]
+# ─────────────────────────────────────────────────────────────
+set -euo pipefail
+cd "$(dirname "${BASH_SOURCE[0]}")/.." || exit 1
+source ./config.sh
+
+task="" status="" branch="" pr="" verify="" summary="" next="" reason="" issue=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --task)    task="$2";    shift 2;;
+    --status)  status="$2";  shift 2;;
+    --branch)  branch="$2";  shift 2;;
+    --pr)      pr="$2";      shift 2;;
+    --verify)  verify="$2";  shift 2;;
+    --summary) summary="$2"; shift 2;;
+    --next)    next="$2";    shift 2;;
+    --reason)  reason="$2";  shift 2;;
+    --issue)   issue="$2";   shift 2;;   # needs_info 時、質問した issue 番号
+    *) echo "unknown arg: $1" >&2; exit 2;;
+  esac
+done
+[ -n "$task" ] && [ -n "$status" ] || { echo "ERROR: --task and --status are required" >&2; exit 2; }
+case "$status" in done|failed|blocked|skipped|needs_info) ;; *) echo "ERROR: invalid status: $status" >&2; exit 2;; esac
+
+# 最小 JSON エスケープ（バックスラッシュと二重引用符のみ。短いフィールド前提）
+esc() { local s="${1//\\/\\\\}"; s="${s//\"/\\\"}"; printf '"%s"' "$s"; }
+
+# verify "k=v,k=v" → {"k":"v",...}
+verify_json="{}"
+if [ -n "$verify" ]; then
+  verify_json=$(awk -F, '{printf "{"; for(i=1;i<=NF;i++){n=split($i,kv,"="); printf "%s\"%s\":\"%s\"",(i>1?",":""),kv[1],kv[2]} printf "}"}' <<<"$verify")
+fi
+
+mkdir -p "$RESULTS_DIR"
+cat > "$RESULTS_DIR/$task.json" <<EOF
+{
+  "task_id": $(esc "$task"),
+  "status": $(esc "$status"),
+  "summary": $(esc "$summary"),
+  "branch": $(esc "$branch"),
+  "pr_url": $(esc "$pr"),
+  "verification": $verify_json,
+  "next": $(esc "$next"),
+  "blocked_reason": $(esc "$reason"),
+  "issue": $(esc "$issue"),
+  "ts": $(esc "$(date +%FT%T)")
+}
+EOF
+echo "loop-report: wrote $RESULTS_DIR/$task.json (status=$status)"
