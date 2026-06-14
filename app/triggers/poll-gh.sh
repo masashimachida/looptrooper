@@ -41,10 +41,11 @@ gh issue list -R "$target_slug" --label "loop:redo" --state open --json number 2
     log redo "issue #$n: loop:redo により再着手可能化（state クリア）"
 done
 
-gh issue list -R "$target_slug" --label loop --state open --json number,title 2>/dev/null \
+gh issue list -R "$target_slug" --label loop --state open --json number,title,createdAt 2>/dev/null \
 | jq -c '.[]' 2>/dev/null | while read -r row; do
     num=$(jq -r '.number' <<<"$row")
     title=$(jq -r '.title' <<<"$row")
+    created=$(jq -r '.createdAt // ""' <<<"$row")
     seen="$STATE_DIR/issue-$num.seen"
     awaiting="$STATE_DIR/issue-$num.awaiting"
 
@@ -56,6 +57,22 @@ gh issue list -R "$target_slug" --label loop --state open --json number,title 2>
       rm -f "$awaiting"                                    # 人間が返信した → 再投入へ
     elif [ -f "$seen" ]; then
       continue                              # 既処理(done/処理中)。従来どおり再投函しない
+    fi
+
+    # ── 新規 issue の猶予（settle）─────────────────────────────
+    # 作成直後の issue は依存(blocked_by)などの配線が未完のことがある。作成→ポーリング→
+    # 依存登録の隙間に走ると未ブロックのまま着手してしまうため、ISSUE_SETTLE_SECS 以内の
+    # issue は seen を立てず1周見送る（次 poll で配線完了後に再評価される）。
+    # 既に seen/awaiting を抜けてきた＝初回評価対象のみが対象。日付解釈失敗時は従来どおり続行（fail-open）。
+    if [ -n "$created" ]; then
+      created_epoch=$(date -d "$created" +%s 2>/dev/null || echo 0)
+      if [ "$created_epoch" -gt 0 ]; then
+        age=$(( $(date +%s) - created_epoch ))
+        if [ "$age" -lt "$ISSUE_SETTLE_SECS" ]; then
+          log settle "issue #$num は作成 ${age}s（< ${ISSUE_SETTLE_SECS}s）＝配線待ちで今周は見送り"
+          continue
+        fi
+      fi
     fi
 
     # ── 依存（blocked by）チェック ──────────────────────────────
