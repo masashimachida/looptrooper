@@ -33,10 +33,9 @@ echo "  APIレート残: $(gh api rate_limit --jq '.rate | "\(.remaining)/\(.lim
 
 # ── タスク（ファイル＝状態機械）──
 echo; echo "■ タスク"
-printf "  queue:%s  処理中:%s  running:%s  blocked:%s  awaiting:%s  processed:%s\n" \
-  "$(cnt "$QUEUE_DIR/*.md")" "$(cnt "$STATE_DIR/*.inprogress")" "$(cnt "$RUNNING_DIR/*.md")" "$(cnt "$BLOCKED_DIR/*.md")" "$(cnt "$AWAITING_DIR/*.md")" "$(cnt "$PROCESSED_DIR/*.md")"
+printf "  queue:%s  処理中:%s  blocked:%s  awaiting:%s  processed:%s\n" \
+  "$(cnt "$QUEUE_DIR/*.md")" "$(cnt "$STATE_DIR/*.inprogress")" "$(cnt "$BLOCKED_DIR/*.md")" "$(cnt "$AWAITING_DIR/*.md")" "$(cnt "$PROCESSED_DIR/*.md")"
 for f in "$STATE_DIR"/*.inprogress; do [ -e "$f" ] && echo "   ▶ 処理中: $(basename "$f" .inprogress)"; done
-for f in "$RUNNING_DIR"/*.md;        do [ -e "$f" ] && echo "   ⏳ running(detached): $(basename "$f" .md)"; done
 for f in "$BLOCKED_DIR"/*.md;        do [ -e "$f" ] && echo "   ⚠ blocked: $(basename "$f" .md)"; done
 for f in "$AWAITING_DIR"/*.md;       do [ -e "$f" ] && echo "   ❓ awaiting: $(basename "$f" .md)"; done
 

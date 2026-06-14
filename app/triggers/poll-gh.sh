@@ -41,11 +41,12 @@ gh issue list -R "$target_slug" --label "loop:redo" --state open --json number 2
     log redo "issue #$n: loop:redo により再着手可能化（state クリア）"
 done
 
-gh issue list -R "$target_slug" --label loop --state open --json number,title,createdAt 2>/dev/null \
+gh issue list -R "$target_slug" --label loop --state open --json number,title,createdAt,labels 2>/dev/null \
 | jq -c '.[]' 2>/dev/null | while read -r row; do
     num=$(jq -r '.number' <<<"$row")
     title=$(jq -r '.title' <<<"$row")
     created=$(jq -r '.createdAt // ""' <<<"$row")
+    labels=$(jq -r '[.labels[].name] | join(",")' <<<"$row")   # loop:long 等の属性ラベル判定に使う
     seen="$STATE_DIR/issue-$num.seen"
     awaiting="$STATE_DIR/issue-$num.awaiting"
 
@@ -94,10 +95,19 @@ gh issue list -R "$target_slug" --label loop --state open --json number,title,cr
     fi
     rm -f "$blocked"                         # 依存解消 or 依存なし → ブロック解除
 
+    # loop:long が付いていれば driver のチェックポイントを長め（TASK_TIMEOUT_LONG）にする。
+    # （人間が「これは時間がかかる」とトリアージ済みの issue。task 本文に書いて driver が読む）
+    long_line=""
+    case ",$labels," in
+      *",loop:long,"*) long_line="task_timeout: $TASK_TIMEOUT_LONG"
+                       log long "issue #$num: loop:long → task_timeout=${TASK_TIMEOUT_LONG}s";;
+    esac
+
     LOOP_SOURCE=issue ./bin/enqueue.sh "issue #$num: $title" - <<EOF
 GitHub issue #$num「$title」に対応してください。
 feature ブランチ loop/<id> で実装し、テストを通して PR を開いてください。
 要件が曖昧で実装方針を確定できない場合は、実装せず issue にコメントで質問すること（loop-task 手順参照）。
+$long_line
 EOF
     : > "$seen"
 done

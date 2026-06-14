@@ -68,12 +68,12 @@ export STATE_DIR="$LOOP_DIR/.loop/state"
 export AWAITING_DIR="$LOOP_DIR/.loop/awaiting"   # 曖昧で issue に質問し人間の回答待ちのタスク
 export MEMORY_DIR="$LOOP_DIR/.loop/memory"       # ループが蓄積する知識（規約/レビュー嗜好/失敗/アウトカム）。対象 repo の外＝PRに混入しない
 export OUTCOMES_DIR="$LOOP_DIR/.loop/outcomes"   # アウトカム観測の台帳（出荷/revert/再オープンのマーカー）
-export RUNNING_DIR="$LOOP_DIR/.loop/running"     # システム側はタイムアウトしたが Claude セッションがまだ走っているタスク（reaper が完走時に遅延ルーティング）
 export STATE_BOARD="$LOOP_DIR/LOOP_STATE.md"
 
 # ── タイミング ──
-export TASK_TIMEOUT="${TASK_TIMEOUT:-1800}"   # 1 タスクの最大待ち秒
-export TASK_EXTEND_MAX="${TASK_EXTEND_MAX:-6}" # タイムアウト後、Claude が working の間に許す延長回数（各 TASK_TIMEOUT 秒）。超えても見限らず detach し reaper が完走を拾う
+export TASK_TIMEOUT="${TASK_TIMEOUT:-1200}"   # 1 タスクのチェックポイントまでの待ち秒（既定20分）。超過したら延長せず中断させ、経過/理由/方針を自己申告させる（人間トリアージへ）
+export TASK_TIMEOUT_LONG="${TASK_TIMEOUT_LONG:-3600}" # loop:long ラベルの issue 用の待ち秒（既定60分）。長時間タスクを許すが無制限ではない（超えればやはり中断・自己申告）
+export CHECKPOINT_GRACE="${CHECKPOINT_GRACE:-180}"   # 中断指示後、自己申告(loop-report --status timeout)が返るのを待つ上限秒。来なければ応答不能とみなし crashed 扱いで再キュー
 export TRIAGE_GRACE="${TRIAGE_GRACE:-60}"     # 着手通知の猶予秒。この間に skipped で返れば「着手」を通知しない（空振りは静かに）
 export POLL_INTERVAL="${POLL_INTERVAL:-5}"    # キュー監視間隔秒（仕事ゼロ＝この sleep だけ＝無課金）
 export STUCK_RECHECK="${STUCK_RECHECK:-2}"    # classify_stuck の 2 回キャプチャ間隔

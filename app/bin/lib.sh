@@ -79,6 +79,18 @@ task_issue() {
   done
 }
 
+# タスクに紐づくタイムアウト秒（チェックポイントまでの待ち）。タスクファイルに
+# "task_timeout: <秒>" があればそれ（loop:long の issue 用に poll-gh が書く）、無ければ既定 TASK_TIMEOUT。
+task_timeout() {
+  local id="$1" f v=""
+  for f in "$QUEUE_DIR/$id.md" "$AWAITING_DIR/$id.md" "$PROCESSED_DIR/$id.md" "$BLOCKED_DIR/$id.md"; do
+    [ -f "$f" ] || continue
+    v=$(grep -oE 'task_timeout:[[:space:]]*[0-9]+' "$f" | head -1 | grep -oE '[0-9]+')
+    break
+  done
+  echo "${v:-$TASK_TIMEOUT}"
+}
+
 # tmux pane の生テキスト取得。判断（成否）には使わない ── liveness / stuck 分類専用。
 pane_text() { tmux capture-pane -p -t "$TMUX_SESSION" 2>/dev/null; }
 pane_cmd()  { tmux display -p -t "$TMUX_SESSION" '#{pane_current_command}' 2>/dev/null; }

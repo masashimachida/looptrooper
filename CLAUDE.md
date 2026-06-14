@@ -58,15 +58,17 @@ trigger（poll-gh=issue / poll-pr=PRレビュー指摘） → enqueue.sh → .lo
     done       → .loop/processed/   （✅ PR 通知）
     skipped    → .loop/processed/   （空振り）
     needs_info → .loop/awaiting/     （issue に質問済み・人間の回答待ち。state に issue-<N>.awaiting）
+    timeout    → .loop/awaiting/     （規定時間超過で中断・自己申告済み・人間トリアージ待ち。state に issue-<N>.awaiting）
     failed/blocked/壊れた result → .loop/blocked/  （⚠️ 通知 ＋ issue に結末コメント）
 ```
 
-- **タイムアウトと「走り続けるセッション」の分離**: driver の `TASK_TIMEOUT` は待ちの壁であって Claude を止めない。タイムアウト後 `classify_stuck` が `working`（`esc to interrupt` か画面変化）を返す間は `TASK_EXTEND_MAX`（既定6）回まで延長を繰り返す＝見限らない。上限超でもなお working なら、再注入の混線を避けて `.loop/running/` へ **detach**（⏳ 通知）。後から result が出れば `reap_detached()`（driver ループ先頭）が遅延ルーティングして PR 通知・整合化する。`classify_stuck` の modal 判定は「生成停止＋末尾に許可フレーズ＋選択肢UI」の3条件に限定（実装中出力の誤検知＝偽 blocked を防ぐ）。
+- **タイムアウト＝「分割ミスのフィードバック」（チェックポイント方式）**: driver は `TASK_TIMEOUT`（既定20分。`loop:long` ラベルの issue は `TASK_TIMEOUT_LONG`＝既定60分）まで待ち、超過かつ `classify_stuck`=working なら**延長せず Escape で中断**し、Claude に「経過・なぜ終わらないか・今後の方針」を issue にコメントさせ `loop-report --status timeout` で自己申告させる（`CHECKPOINT_GRACE` 内に返らなければ応答不能とみなし再キュー）。外からは「遅いだけ」か「堂々巡り」か判別できないので、本人に申告させ人間がトリアージ（redo / 分割 / `loop:long`）する。経験則「規定時間で終わらないタスクは大抵終わらない」に基づき、旧来の「working の間は見限らず延長・detach・reaper」は**廃止**した。`classify_stuck` の modal 判定は「生成停止＋末尾に許可フレーズ＋選択肢UI」の3条件に限定（実装中出力の誤検知＝偽 blocked を防ぐ）。
 - **失敗の結末を issue に残す（分離環境対応）**: `route_result` の `failed`/`blocked`/壊れた result と、modal 停止時に、driver が `comment_outcome()` で **issue にコメント**（`--summary`/`--reason`/`--verify`/`--next` の要約＋隠しマーカー `<!-- loop:outcome -->`）。ループ基盤と起票セッションが別マシンでも、人間は `gh issue view <N> --comments` で失敗の中身を読める＝GitHub を唯一の共有面に使う（生ログは出さない＝漏えい面の最小化。raw は基盤側 `.loop/logs`）。crashed/hung は requeue 前提でスパム回避のため無コメント。
 - 起動時 `recover_inflight()`: `*.inprogress` が残っていれば中断とみなし result を消して再処理（queue に残す）。
 - `state/issue-<N>.seen` = 既処理（再投函しない）。`state/issue-<N>.awaiting` = 回答待ち。`state/issue-<N>.blocked` = 依存未完了で待機中。`state/pr-<N>.review` = 対応済みレビュー id。
 - **再着手ジェスチャ `loop:redo`**: 既処理 issue を「もう一度やって」と人間が指示する手段。ファイルを触らず **issue に `loop:redo` ラベルを付けるだけ**（iOS でもタップ可）。
   `poll-gh.sh` の redo パスが `.seen`/`.awaiting`/`.blocked` を消し、`loop:redo` を外して `loop` を付け直す→本処理パスが通常どおり再 enqueue（1回で消費＝冪等）。再オープン検出の通知もこのラベルを案内する。ラベルは `setup-target` が冪等作成。
+- **長時間許可ジェスチャ `loop:long`**: 「この issue は時間がかかる」と人間がトリアージするための**持続的な属性ラベル**（`loop:redo` と直交。timeout で中断した issue を「長いだけ」と判断した時に付けて再開する、または最初から長いと分かっている issue に付ける）。`poll-gh.sh` が enqueue 時にこれを見て task 本文に `task_timeout: $TASK_TIMEOUT_LONG` を書き、driver のチェックポイントを既定20分→60分に延ばす（無制限ではない＝超えればやはり中断・自己申告）。ラベルは `setup-target` が冪等作成。
 - **環境からゴール生成（依存脆弱性）**: `poll-deps.sh`（poller が呼ぶが `DEPS_INTERVAL`＝既定24h で自己スロットル・LLM 非依存）が `AUDIT_CMD`（既定 `npm audit --json`）で対象 repo を監査。
   high/critical かつ修正版がある脆弱性を**自動で issue 起票**（非メジャー→`loop`＝実装〜PRまで自走／メジャー→`loop:proposed`＝人間承認）。重複は `state/dep-<advisory>.filed` で抑制、1回 `DEPS_MAX_PER_RUN` 件まで。マージは人間ゲート・Verifier が通らなければ PR は出ない。
 - **アウトカム観測（結末をメモリに返す）**: `poll-outcome.sh`（poller が毎周回実行・LLM 非依存）がマージ済み loop PR の“その後”を見て、

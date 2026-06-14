@@ -29,7 +29,7 @@ while [ $# -gt 0 ]; do
   esac
 done
 [ -n "$task" ] && [ -n "$status" ] || { echo "ERROR: --task and --status are required" >&2; exit 2; }
-case "$status" in done|failed|blocked|skipped|needs_info) ;; *) echo "ERROR: invalid status: $status" >&2; exit 2;; esac
+case "$status" in done|failed|blocked|skipped|needs_info|timeout) ;; *) echo "ERROR: invalid status: $status" >&2; exit 2;; esac
 
 # 最小 JSON エスケープ（バックスラッシュと二重引用符のみ。短いフィールド前提）
 esc() { local s="${1//\\/\\\\}"; s="${s//\"/\\\"}"; printf '"%s"' "$s"; }
