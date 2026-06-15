@@ -55,13 +55,10 @@ description: ループのドライバから注入された1件のタスクを、
    - **編集前の調査は `research` サブエージェント（Haiku・読み取り専用）に委譲する** — 「どこを変えるか」「構造・規約・既存の類似実装」「使用箇所の検索」など広く読む探索は research に投げ、返ってきた要約（`path:line`）を起点に動く。**実際に編集するファイルだけ自分で読む**（広い探索をメインの Sonnet 文脈に溜めない＝コストと文脈の節約）。
    - 編集そのもの（Write/Edit）はこのメインスレッド(Fixer)が行う。research には編集させない。
 
-5. **検証（Verifier ＝ 別サブエージェント）** — **自分で採点しない**。サブエージェントを1つ起動し、次を実行させて結果だけ受け取る:
-   - ビルド/テスト/lint は **`$BUILD_CMD` / `$TEST_CMD` / `$LINT_CMD` を“そのまま”実行する**（compose で渡される）。
-     **値が設定されていれば勝手に別コマンドへ置換しない**（例: `$BUILD_CMD` が `docker build …` なら docker build を実行する。`npm run build` 等に化けさせない）。
-     サブエージェントには各変数の**展開後の実値**を渡し、実行前に `echo "$BUILD_CMD"`（等）で何を走らせるか記録してから実行する。
-     **変数が空のときに限り** package.json 等から推測してよい。
-   - `/code-review` で差分をレビュー
-   いずれかが fail なら `status=failed`。green の時だけ次へ。
+5. **検証（自分で採点しない＝別サブエージェント）** — メイン(Fixer)は採点しない。2つに分けて、いずれも別サブエージェントに任せる:
+   - **5a. ビルド/テスト/lint の実行 → `verify-runner` サブエージェント（Haiku）** — `$BUILD_CMD` / `$TEST_CMD` / `$LINT_CMD` を**“そのまま”実行**（compose で渡される実値。**勝手に別コマンドへ置換しない**＝`docker build …` を `npm run build` 等に化けさせない。変数が空のときだけ推測可）。verify-runner には各変数の**展開後の実値**を渡す。返ってくるのは **PASS/FAIL と失敗時の最小抜粋だけ**（npm ci 等の長いログ全文はメイン文脈に持ち込まない＝安いモデルで消化させコストと文脈を節約）。
+   - **5b. コードレビュー → 別サブエージェント（Sonnet）** — `/code-review` で差分をレビュー。バグ検出の品質ゲートなので Haiku に落とさず Sonnet（model 既定=inherit）で行う。
+   - 5a / 5b いずれか fail なら `status=failed`。両方 green の時だけ次へ。
 
 6. **提案** — 検証が green の時だけ:
    - `git push origin loop/<id>`（main 不可・force 不可）
@@ -101,7 +98,7 @@ description: ループのドライバから注入された1件のタスクを、
    git worktree add <dir> <pr_branch>
    ```
 4. **指摘に対応して実装**（最小差分。指摘以外の無関係な変更を混ぜない）。
-5. **検証（Verifier ＝ 別サブエージェント）** — 通常と同じ（`$BUILD_CMD`/`$TEST_CMD`/`$LINT_CMD` ＋ `/code-review`）。green の時だけ次へ。
+5. **検証** — 通常と同じ（手順5）。**5a. `verify-runner`(Haiku) でビルド/テスト/lint 実行 → 5b. 別サブエージェント(Sonnet) で `/code-review`**。両方 green の時だけ次へ。
 6. **同じブランチに push して PR を更新**（新規 PR は作らない＝push で自動更新される）:
    ```bash
    git push origin <pr_branch>
