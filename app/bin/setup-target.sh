@@ -39,6 +39,11 @@ mkdir -p "$TARGET_REPO_DIR/.claude/skills"
 cp "$LOOP_DIR/.claude/settings.json" "$TARGET_REPO_DIR/.claude/settings.json"
 rm -rf "$TARGET_REPO_DIR/.claude/skills/loop-task"
 cp -r "$LOOP_DIR/.claude/skills/loop-task" "$TARGET_REPO_DIR/.claude/skills/"
+# サブエージェント（research=Haiku 読み取り専用 等）も配布。Fixer が調査を委譲して使う。
+if [ -d "$LOOP_DIR/.claude/agents" ]; then
+  rm -rf "$TARGET_REPO_DIR/.claude/agents"
+  cp -r "$LOOP_DIR/.claude/agents" "$TARGET_REPO_DIR/.claude/"
+fi
 
 # ── 4.2) ラベルを用意（冪等）──
 #   loop      = ループの駆動対象（issue にこれを付けると拾われる）
