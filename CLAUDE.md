@@ -71,8 +71,8 @@ trigger（poll-gh=issue / poll-pr=PRレビュー指摘） → enqueue.sh → .lo
 - **長時間許可ジェスチャ `loop:long`**: 「この issue は時間がかかる」と人間がトリアージするための**持続的な属性ラベル**（`loop:redo` と直交。timeout で中断した issue を「長いだけ」と判断した時に付けて再開する、または最初から長いと分かっている issue に付ける）。`poll-gh.sh` が enqueue 時にこれを見て task 本文に `task_timeout: $TASK_TIMEOUT_LONG` を書き、driver のチェックポイントを既定20分→60分に延ばす（無制限ではない＝超えればやはり中断・自己申告）。ラベルは `setup-target` が冪等作成。
 - **環境からゴール生成（依存脆弱性）**: `poll-deps.sh`（poller が呼ぶが `DEPS_INTERVAL`＝既定24h で自己スロットル・LLM 非依存）が `AUDIT_CMD`（既定 `npm audit --json`）で対象 repo を監査。
   high/critical かつ修正版がある脆弱性を**自動で issue 起票**（非メジャー→`loop`＝実装〜PRまで自走／メジャー→`loop:proposed`＝人間承認）。重複は `state/dep-<advisory>.filed` で抑制、1回 `DEPS_MAX_PER_RUN` 件まで。マージは人間ゲート・Verifier が通らなければ PR は出ない。
-- **重いテストの定期実行 → 失敗を起票**: `poll-test.sh`（poller が呼ぶが `HEAVY_TEST_INTERVAL`＝既定24h で自己スロットル・LLM 非依存）が `HEAVY_TEST_CMD`（既定空＝無効）を対象 repo で1日1回実行。
-  毎タスクの Verifier では重すぎる e2e 等を回し、落ちたら**失敗ログ末尾だけ**を本文に貼って **issue 自動起票**（既定 `HEAVY_TEST_LABEL=loop:proposed`＝人間承認後）。重複は隠しマーカー `<!-- loop:heavy-test -->` 付き open issue の存在で抑制（持続失敗の量産防止）。「軽いテストは毎タスクの Verifier で／重いテストは1日1回ここで」という補完関係。
+- **main の CI 失敗 → 起票**: `poll-ci.sh`（poller が毎周回実行・LLM 非依存）が `CI_WORKFLOW`（既定空＝無効）で指定した GitHub Actions ワークフローの、`CI_BRANCH`（既定 main）の**最新の完了 run**を見て、`failure`/`timed_out`/`startup_failure` なら **issue 自動起票**（既定 `CI_ISSUE_LABEL=loop:proposed`＝人間承認後／run URL ＋失敗ジョブ名を添える・生ログは貼らない）。重複は run id ごとの `state/ci-<id>.filed` ＋隠しマーカー `<!-- loop:ci-failure -->` 付き open issue の存在で抑制。
+  **重いテストを自前 dind で再現せず、マージを実際にゲートしてる正規環境（CI）の結果をそのまま受け取る**設計（サンドボックス由来の偽陽性が出ない・計算ゼロ・poll-outcome と同型の継続監視）。per-task の Verifier は未 push ブランチを検証するので従来どおり自前 dind のまま（CI はまだ走らない）＝役割が違う。
 - **アウトカム観測（結末をメモリに返す）**: `poll-outcome.sh`（poller が毎周回実行・LLM 非依存）がマージ済み loop PR の“その後”を見て、
   **revert された / 閉じた issue が再オープンした**という**負のアウトカム**を検出し、`.loop/memory/outcomes.md` に追記＋⚠️通知。`.loop/outcomes/` のマーカーで冪等。
   これで「テスト緑」という代理指標でなく**現実の結末**がメモリに返り、loop-task が次に同じ轍を踏まないよう参照する（＝検証の自己採点を現実で補正する）。
