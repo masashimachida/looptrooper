@@ -53,9 +53,10 @@ fi
 #               （TASK_TIMEOUT_LONG）になる。タイムアウト中断→再開時の再中断を避ける用途。
 _slug=$(printf '%s' "$TARGET_REPO_URL" | sed -E 's#.*github\.com[:/]##; s#\.git$##')
 if [ -n "$_slug" ]; then
-  gh label create loop      -R "$_slug" --color BFD4F2 --description "ループの駆動対象" 2>/dev/null || true
-  gh label create loop:redo -R "$_slug" --color D93F0B --description "人間が再着手を指示（1回で消費）" 2>/dev/null || true
-  gh label create loop:long -R "$_slug" --color FBCA04 --description "時間がかかる issue（チェックポイントを長めに）" 2>/dev/null || true
+  gh label create loop          -R "$_slug" --color BFD4F2 --description "ループの駆動対象" 2>/dev/null || true
+  gh label create loop:redo     -R "$_slug" --color D93F0B --description "人間が再着手を指示（1回で消費）" 2>/dev/null || true
+  gh label create loop:long     -R "$_slug" --color FBCA04 --description "時間がかかる issue（チェックポイントを長めに）" 2>/dev/null || true
+  gh label create loop:proposed -R "$_slug" --color C5DEF5 --description "提案（人間が loop を付けて承認したら着手）" 2>/dev/null || true
 fi
 
 # ── 4.5) ループ用メモリを seed（冪等。既にあれば触らない＝蓄積を消さない）──

@@ -18,6 +18,7 @@ while true; do
   [ "${ENABLE_POLL_PR:-true}" = true ]      && { ./triggers/poll-pr.sh      >> "$LOGS_DIR/poller.log" 2>&1 || log warn "poll-pr failed (rc=$?); will retry next cycle"; }
   [ "${ENABLE_POLL_OUTCOME:-true}" = true ] && { ./triggers/poll-outcome.sh >> "$LOGS_DIR/poller.log" 2>&1 || log warn "poll-outcome failed (rc=$?); will retry next cycle"; }
   [ "${ENABLE_POLL_DEPS:-true}" = true ]    && { ./triggers/poll-deps.sh    >> "$LOGS_DIR/poller.log" 2>&1 || log warn "poll-deps failed (rc=$?); will retry next cycle"; }
+  [ "${ENABLE_POLL_TEST:-true}" = true ]    && { ./triggers/poll-test.sh    >> "$LOGS_DIR/poller.log" 2>&1 || log warn "poll-test failed (rc=$?); will retry next cycle"; }
   date +%s > "$STATE_DIR/poller.heartbeat"   # 巡回した証跡（status.sh が鮮度表示に使う。ログは汚さない）
   sleep "$POLL_GH_INTERVAL"
 done
