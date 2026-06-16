@@ -23,6 +23,19 @@ command -v gh >/dev/null 2>&1 || { echo "gh not installed" >&2; exit 1; }
 slug=$(target_slug)
 [ -n "$slug" ] || { echo "ERROR: 対象 repo の slug を解決できません" >&2; exit 1; }
 
+# ── 対象 repo の準備確認（読み取り専用＝driver と共有の clone を書き換えない）──
+#   起動直後は `git clone` が .git を先に作って作業ツリーを後で展開するため、
+#   「.git はあるがファイルはまだ」の隙間がある。そこで重いテストを走らせると
+#   compose が設定ファイルを見つけられず即死し、それを「テスト失敗」と誤検知して
+#   偽の issue を立ててしまう（実際に踏んだ）。HEAD が取れ、かつ作業ツリーが HEAD と
+#   一致している（＝チェックアウト完了・未編集）時だけ走らせる。未準備なら lastrun も
+#   書かずに次周回へ回す（偽失敗で24hロックしない）。
+if ! git -C "$TARGET_REPO_DIR" rev-parse HEAD >/dev/null 2>&1 \
+   || ! git -C "$TARGET_REPO_DIR" diff --quiet HEAD 2>/dev/null; then
+  log test "対象 repo が未準備 or 作業ツリーが HEAD と不一致＝今周は見送り（偽失敗の起票を防ぐ）"
+  exit 0
+fi
+
 # ── 自己スロットル（1日1回相当）。lastrun は実行前に更新＝
 #    途中失敗で毎周回 重いテストを回し直すのを防ぐ（重い処理なので特に重要）──
 lastrun_file="$STATE_DIR/heavy-test.lastrun"
