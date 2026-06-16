@@ -124,7 +124,12 @@ wait_result() {
 classify_stuck() {
   local a b tl
   a=$(pane_text); sleep "$STUCK_RECHECK"; b=$(pane_text)
-  tl=$(tail -12 <<<"$b")
+  # modal 判定の前に常駐クローム行を除外する（重要）:
+  #   Claude Code のフッター "Auto-update failed: no write permission to npm prefix" は
+  #   "permission to" を含むため、idle 時（API 500 等で生成停止）にこの行を拾って
+  #   許可モーダルと誤判定し、偽 blocked に落としていた。"bypass permissions on" の
+  #   ステータス行も同類なので落とす。これらは状態判定に無関係な装飾。
+  tl=$(tail -12 <<<"$b" | grep -vE 'no write permission to npm prefix|Auto-update failed|bypass permissions on')
   if   grep -qiE 'usage limit|resets at|rate limit' <<<"$b"; then echo limit
   elif ! grep -qiE '\b(claude|node)\b' <<<"$(pane_cmd)"; then echo crashed
   elif ! grep -qi 'esc to interrupt' <<<"$b" \
