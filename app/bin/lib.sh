@@ -42,8 +42,13 @@ slack_post() {
     def linkify:
       gsub("(?<u>https?://[^\\s|()]+/pull/(?<n>[0-9]+))"; "<\(.u)|PR #\(.n)>")
       | gsub("(?<u>https?://[^\\s|()]+/issues/(?<n>[0-9]+))"; "<\(.u)|#\(.n)>");
+    # attachment の fallback は OS のプッシュ通知プレビュー用の要約。これが無いと
+    # 内容が attachments/blocks の中だけにあり、通知欄に出せず "[no preview available]"
+    # になる。fallback は通知・非リッチクライアント専用でチャンネル本文には重複表示されない
+    # （本文は下の blocks が担う）。色付きサイドバー(attachments)もそのまま維持。
     { attachments: [ {
         color: $color,
+        fallback: $text,
         blocks: [
           { type: "section", text: { type: "mrkdwn", text: ($text | linkify) } },
           { type: "context", elements: [ { type: "mrkdwn", text: $ctx } ] }
