@@ -39,6 +39,11 @@ mkdir -p "$TARGET_REPO_DIR/.claude/skills"
 cp "$LOOP_DIR/.claude/settings.json" "$TARGET_REPO_DIR/.claude/settings.json"
 rm -rf "$TARGET_REPO_DIR/.claude/skills/loop-task"
 cp -r "$LOOP_DIR/.claude/skills/loop-task" "$TARGET_REPO_DIR/.claude/skills/"
+# loop-decompose = 仕様フェーズの分解タスク用スキル（poll-spec が投函・loop-task が委譲）。executor 側なので配布する。
+if [ -d "$LOOP_DIR/.claude/skills/loop-decompose" ]; then
+  rm -rf "$TARGET_REPO_DIR/.claude/skills/loop-decompose"
+  cp -r "$LOOP_DIR/.claude/skills/loop-decompose" "$TARGET_REPO_DIR/.claude/skills/"
+fi
 # サブエージェント（research=Haiku 読み取り専用 等）も配布。Fixer が調査を委譲して使う。
 if [ -d "$LOOP_DIR/.claude/agents" ]; then
   rm -rf "$TARGET_REPO_DIR/.claude/agents"

@@ -81,8 +81,15 @@ route_result() {
   case "$status" in
     done)
       pr=$(result_field "$id" pr_url)
-      notify "✅ レビュー待ちの PR ができました${title:+: $title}: ${pr:-<URLなし>} ($id)${iurl:+ | issue: $iurl}"
-      log done "$id -> $pr"
+      if grep -q '^spec_phase:' "$QUEUE_DIR/$id.md" 2>/dev/null; then
+        # 仕様分解タスク＝PR ではなく issue 群を起票して完了（見えるが止めない）。
+        local sm; sm=$(result_field "$id" summary)
+        notify "🧩 仕様フェーズを分解しました${title:+: $title}: ${sm:-issue を起票} ($id)"
+        log done "$id -> decompose: ${sm:-(no summary)}"
+      else
+        notify "✅ レビュー待ちの PR ができました${title:+: $title}: ${pr:-<URLなし>} ($id)${iurl:+ | issue: $iurl}"
+        log done "$id -> $pr"
+      fi
       mv "$QUEUE_DIR/$id.md" "$PROCESSED_DIR/" 2>/dev/null || true
       ;;
     skipped)

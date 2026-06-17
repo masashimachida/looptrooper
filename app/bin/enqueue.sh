@@ -6,6 +6,7 @@
 #   ※タスク入力は GitHub に限定する（唯一の正規入力源）。呼べるのはポーラだけ:
 #     - poll-gh.sh が LOOP_SOURCE=issue（issue 駆動）
 #     - poll-pr.sh が LOOP_SOURCE=pr-review（PR レビュー指摘の往復）
+#     - poll-spec.sh が LOOP_SOURCE=spec（仕様フェーズの分解＝issue 群を生成）
 #     それ以外（手動・git hook 等）からの投函は事故防止のため拒否する。
 #     smoke test も対象 repo に 'loop' ラベル付き issue を立てて行うこと。
 #
@@ -20,7 +21,7 @@ source ./config.sh
 
 # 入力源は GitHub（issue / PR レビュー）のみ。ポーラ以外からの投函を拒否する。
 case "${LOOP_SOURCE:-}" in
-  issue|pr-review) ;;
+  issue|pr-review|spec) ;;
   *)
     cat >&2 <<'MSG'
 enqueue.sh: タスク入力は GitHub（issue / PR レビュー）に限定されています。

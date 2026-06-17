@@ -71,6 +71,7 @@ trigger（poll-gh=issue / poll-pr=PRレビュー指摘） → enqueue.sh → .lo
 - **長時間許可ジェスチャ `loop:long`**: 「この issue は時間がかかる」と人間がトリアージするための**持続的な属性ラベル**（`loop:redo` と直交。timeout で中断した issue を「長いだけ」と判断した時に付けて再開する、または最初から長いと分かっている issue に付ける）。`poll-gh.sh` が enqueue 時にこれを見て task 本文に `task_timeout: $TASK_TIMEOUT_LONG` を書き、driver のチェックポイントを既定20分→60分に延ばす（無制限ではない＝超えればやはり中断・自己申告）。ラベルは `setup-target` が冪等作成。
 - **環境からゴール生成（依存脆弱性）**: `poll-deps.sh`（LLM 非依存。実行頻度は `POLL_DEPS_CRON`＝既定 `0 3 * * *`=毎日3時が唯一の権威。旧 `DEPS_INTERVAL` の内部スロットルは廃止＝cron と二重管理・増回の握り潰しを避けた）が `AUDIT_CMD`（既定 `npm audit --json`）で対象 repo を監査。
   high/critical かつ修正版がある脆弱性を**自動で issue 起票**（非メジャー→`loop`＝実装〜PRまで自走／メジャー→`loop:proposed`＝人間承認）。重複は `state/dep-<advisory>.filed` で抑制、1回 `DEPS_MAX_PER_RUN` 件まで。マージは人間ゲート・Verifier が通らなければ PR は出ない。
+- **環境からゴール生成（仕様書駆動の自律分解）**: `poll-spec.sh`（LLM 非依存。`ENABLE_POLL_SPEC`／既定 15 分間隔。`spec/` が無ければ no-op）が対象 repo の `SPEC_DIR`（既定 `spec/`）を入力に、**フェーズ単位で issue 群を自律生成**する。入力＝`00-overview.md`（全体像・共通制約）＋ `NN-slug.md`（フェーズ1枚＝意味の単位）。**フェーズ = GitHub マイルストーン「NN: slug」**（完了検知＝`open_issues==0` かつ `closed>0`／自前 state 台帳が不要）。**遅延分解**＝前フェーズ完了を検知したら次フェーズを1回だけ分解（前フェーズのマージ済み実物を読んで割る＝drift 補正）。poll-spec(bash) は「次に分解すべきフェーズの検知」と「マイルストーン作成（＝冪等マーカー。存在＝分解済み/分解中）」だけを行い、実際の分解は `LOOP_SOURCE=spec` で投函する**分解タスク**（`loop-decompose` スキル／`setup-target` が配布）に委譲＝**LLM はそこだけ**。分解器は spec を 1 PR 単位（目安 ~10 分粒度・フェーズ内 issue 数は無制限）の issue に割り、`--milestone` で紐付け・`blocked_by` で順序配線・**最後に `loop` ラベル**（作成→依存→ラベルの順＝poll-gh が拾う時に依存が揃う）。**承認ゲートは PR マージに移動**（issue 再承認はしない＝spec を人間が承認済み・マージは必ず人間なので全自動でも main に勝手に入らない）。分解タスクが空マイルストーンを残して失敗したら driver が ⚠️ 通知＝人間が GitHub でそのマイルストーンを削除すれば次 poll で再分解（GitHub を唯一の共有面に）。
 - **main の CI 失敗 → 起票**: `poll-ci.sh`（poller が毎周回実行・LLM 非依存）が `CI_WORKFLOW`（既定空＝無効）で指定した GitHub Actions ワークフローの、`CI_BRANCH`（既定 main）の**最新の完了 run**を見て、`failure`/`timed_out`/`startup_failure` なら **issue 自動起票**（既定 `CI_ISSUE_LABEL=loop:proposed`＝人間承認後／run URL ＋失敗ジョブ名を添える・生ログは貼らない）。重複は run id ごとの `state/ci-<id>.filed` ＋隠しマーカー `<!-- loop:ci-failure -->` 付き open issue の存在で抑制。CI 修正は調査＋再CI待ちで長くなりがちなので **既定で `loop:long` も付ける**（`CI_ISSUE_LONG=true`／timeout→再実行の二重払いを避ける）。
   **重いテストを自前 dind で再現せず、マージを実際にゲートしてる正規環境（CI）の結果をそのまま受け取る**設計（サンドボックス由来の偽陽性が出ない・計算ゼロ・poll-outcome と同型の継続監視）。per-task の Verifier は未 push ブランチを検証するので従来どおり自前 dind のまま（CI はまだ走らない）＝役割が違う。
 - **アウトカム観測（結末をメモリに返す）**: `poll-outcome.sh`（poller が毎周回実行・LLM 非依存）がマージ済み loop PR の“その後”を見て、
@@ -98,9 +99,10 @@ trigger（poll-gh=issue / poll-pr=PRレビュー指摘） → enqueue.sh → .lo
 
 - **リポジトリ直下の `.claude/`** = この基盤を**開発するセッション**（あなた）用。bash の構文チェックや compose 操作を許可する軽い設定。
 - **`app/.claude/`** = 保守対象 repo へ**配布される**プロファイル（自分用ではない）。`setup-target.sh` が対象 repo の `.claude/` に
-  `settings.json` と `skills/loop-task/` をコピーする。`app/.claude/skills/loop-task/SKILL.md` を編集すると
+  `settings.json` と `skills/loop-task/`・`skills/loop-decompose/`（あれば `agents/`）をコピーする。`app/.claude/skills/loop-task/SKILL.md` を編集すると
   **ループの挙動そのもの**が変わる（権限・手順・禁止事項）。ここはループの「番人」なので慎重に。
   → 開発用の緩い権限を `app/.claude/` に書かないこと。混同するとループの安全装置を弱める。
+- **`app/.claude/skills/loop-decompose/`** = **仕様フェーズの分解スキル（executor 側＝無人）**。`poll-spec.sh` が `LOOP_SOURCE=spec` で投函した分解タスク（本文に `spec_phase:`）を loop-task が委譲する。spec の1フェーズを 1 PR 単位の issue 群に割って起票するだけ（コード・PR は作らない）。draft-loop-issue（人間用）と違い **`setup-target` が配布する**（bot の `/work/repo` で動くため）。
 - **`app/.claude/skills/draft-loop-issue/`** = **人間（プランナー役）が対話的に使う起票スキル**。`loop-task`（executor＝無人）と対になる入力側の道具で、
   **`setup-target` では配布しない**（bot の `/work/repo` ではなく、人間が対象 repo を checkout したセッションで使う）。設置は人間のグローバル `~/.claude/skills/` か、対象 repo へコミット。
   狙いは「issue の質がループ出力の質を決める」を踏まえ、対象 repo に接地した精密な issue を `loop`/`loop:proposed` で立てること（認知の欠落(1)の人間ドリブン版）。

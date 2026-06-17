@@ -39,6 +39,7 @@ while true; do
   run_poll OUTCOME ./triggers/poll-outcome.sh outcome
   run_poll DEPS    ./triggers/poll-deps.sh    deps
   run_poll CI      ./triggers/poll-ci.sh      ci
+  run_poll SPEC    ./triggers/poll-spec.sh    spec
   date +%s > "$STATE_DIR/poller.heartbeat"   # 巡回した証跡（status.sh が鮮度表示に使う。ログは汚さない）
   sleep "$POLL_TICK"
 done
