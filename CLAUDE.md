@@ -106,6 +106,7 @@ trigger（poll-gh=issue / poll-pr=PRレビュー指摘） → enqueue.sh → .lo
 - **`app/.claude/skills/draft-loop-issue/`** = **人間（プランナー役）が対話的に使う起票スキル**。`loop-task`（executor＝無人）と対になる入力側の道具で、
   **`setup-target` では配布しない**（bot の `/work/repo` ではなく、人間が対象 repo を checkout したセッションで使う）。設置は人間のグローバル `~/.claude/skills/` か、対象 repo へコミット。
   狙いは「issue の質がループ出力の質を決める」を踏まえ、対象 repo に接地した精密な issue を `loop`/`loop:proposed` で立てること（認知の欠落(1)の人間ドリブン版）。
+- **`app/.claude/commands/draft-loop-spec.md`** = **人間が対話的に叩く spec 起草スラッシュコマンド** `/draft-loop-spec`（`draft-loop-issue` の上流）。`grill-me` 風に**容赦なく問い詰めて**曖昧さを潰し、対象 repo に接地して `poll-spec` が食う `spec/`（`00-overview.md` ＋ フェーズ毎の `NN-slug.md`）を書き出す。issue までは割らない（それは `loop-decompose` の仕事）。**ファイル生成のみ**で commit/push/PR はしない（spec は既定ブランチに入った瞬間に自動分解が始まる重い変更なので人間が反映を判断）。skill ではなく command にしたのは「人間が意図的に起動する対話ツール」だから。`draft-loop-issue`（skill）同様 **`setup-target` では配布しない**（人間が `~/.claude/commands/` か対象 repo にコピーして使う）。
 
 ## よく使うコマンド
 
