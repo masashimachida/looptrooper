@@ -47,6 +47,10 @@ export GIT_USER_EMAIL="${GIT_USER_EMAIL:-loop-bot@users.noreply.github.com}"
 export BUILD_CMD="${BUILD_CMD:-echo 'TODO: set BUILD_CMD in config.sh'; false}"
 export TEST_CMD="${TEST_CMD:-echo 'TODO: set TEST_CMD in config.sh'; false}"
 export LINT_CMD="${LINT_CMD:-echo 'TODO: set LINT_CMD in config.sh'; false}"
+# verify-runner が1コマンドに掛ける時間上限（秒）。サービス未起動の DB を上限なしで待つ
+# 等の事故でループ全体が何分も溶けるのを防ぐ天井。超過は FAIL(TIMEOUT) 扱い＝呼び出し元が
+# 「環境が要る」と気づけるようにする（タスク全体のチェックポイント TASK_TIMEOUT より十分小さく）。
+export VERIFY_TIMEOUT="${VERIFY_TIMEOUT:-600}"
 
 # ── claude セッションが使うモデル ──
 #   env_file 経由でコンテナ env に入り、session-keeper が source した後に tmux を起こすので
