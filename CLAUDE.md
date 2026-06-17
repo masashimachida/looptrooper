@@ -76,7 +76,10 @@ trigger（poll-gh=issue / poll-pr=PRレビュー指摘） → enqueue.sh → .lo
 - **アウトカム観測（結末をメモリに返す）**: `poll-outcome.sh`（poller が毎周回実行・LLM 非依存）がマージ済み loop PR の“その後”を見て、
   **revert された / 閉じた issue が再オープンした**という**負のアウトカム**を検出し、`.loop/memory/outcomes.md` に追記＋⚠️通知。`.loop/outcomes/` のマーカーで冪等。
   これで「テスト緑」という代理指標でなく**現実の結末**がメモリに返り、loop-task が次に同じ轍を踏まないよう参照する（＝検証の自己採点を現実で補正する）。
-- **ポーラーの実行スケジュール（間隔 or 時刻）**: 既定は `poller.sh` が `POLL_GH_INTERVAL`（15分）で**毎周回**各ポーラーを呼ぶ（間隔ベース。deps/ci は中で self-throttle）。ポーラー毎に `POLL_<NAME>_AT="HH:MM"`（GH/PR/OUTCOME/DEPS/CI）を設定すると、そのポーラーだけ**毎日その時刻以降に1回**に切り替わる（`lib.sh` の `due_daily`／`state/poll-<name>.lastday` で1日1回を担保・**cron 不要**・TZ 基準・粒度は巡回間隔）。主入力(GH/PR)は反応速度のため通常は空（間隔）のまま、1日1回系(DEPS/CI)向き。`run_poll` が `ENABLE_POLL_<NAME>` トグルと併せて捌く。
+- **ポーラーの実行スケジュール（cron 書式・ポーラー毎）**: `poller.sh` は `POLL_TICK`（既定60s）で起き、各ポーラーの予定を判定する（`run_poll`＝`ENABLE_POLL_<NAME>` トグルと併せて捌く）。**cron デーモンには依存せず、cron の“書式”だけ自前 bash（`lib.sh` の `cron_match`／`_cron_field`）で評価する**（＝「番人は素の bash」を保ったまま表現力だけ cron に揃える）。`POLL_<NAME>_CRON`（GH/PR/OUTCOME/DEPS/CI）で:
+  - **空** → 既定間隔 `POLL_GH_INTERVAL`（15分）ごと（後方互換・`due_every`／`state/poll-<name>.lastrun`。deps/ci は中でさらに self-throttle）
+  - **cron式**（標準5フィールド「分 時 日 月 曜」, `*` `a-b` `a,b` `*/s` 対応）→ マッチする分に1回（`due_cron`／同分重複は `state/poll-<name>.lastmin` で抑止・TZ 基準）。例 `"*/30 * * * *"`=30分毎, `"0 3 * * *"`=毎日3時, `"0 9 * * 1-5"`=平日9時。
+  起動時は間隔系 `lastrun` を消して各ポーラーを1回走らせる（再起動後すぐ拾う／cron の `lastmin` は残し同分2重実行を防ぐ）。dom/dow は AND 判定（標準 cron の OR 例外は踏襲しない）。
 - **ループのメモリ（タスクを跨ぐ学習）**: `.loop/memory/`（`MEMORY.md` 索引 ＋ `conventions.md`/`review-prefs.md`/`pitfalls.md`/`outcomes.md`）。
   loop-task が**開始時に読み**（既知の規約・レビュー嗜好・失敗を踏まえて実装）、**終了時に“次に効く”学びだけ書き戻す**。対象 repo の外（PR に混入しない）・バインドマウントで永続。
   狙いは「毎回まっさらな1回プロンプト」からの脱却（＝経験を蓄積して賢くする）。特に PR レビュー指摘を `review-prefs.md` に溜めて新規実装で先回りさせる。setup-target が冪等 seed。

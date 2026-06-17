@@ -84,21 +84,73 @@ task_issue() {
   done
 }
 
-# 時刻スケジュールの発火判定（毎日 "HH:MM" 以降に1回だけ true=0 を返す）。
-#   $1 = state キー（例 gh, deps）, $2 = "HH:MM"（"HH" なら分は00扱い）。
-#   今日まだ走っておらず、現在時刻が指定時刻以降なら 0 を返し当日を記録。それ以外は 1。
-#   粒度は poller の巡回間隔（指定時刻を過ぎた最初の周回で発火）。cron を使わずに「⚪時実行」を実現する。
-due_daily() {
-  local key="$1" at="$2" f today last hh mm now_min at_min
-  f="$STATE_DIR/poll-$key.lastday"
-  today=$(date +%F)
-  last=$(cat "$f" 2>/dev/null || echo "")
-  [ "$today" = "$last" ] && return 1                       # 今日もう走った
-  hh=${at%%:*}; mm=${at#*:}; [ "$mm" = "$at" ] && mm=0      # "HH:MM" / "HH"
-  now_min=$(( 10#$(date +%H) * 60 + 10#$(date +%M) ))
-  at_min=$(( 10#$hh * 60 + 10#$mm ))
-  [ "$now_min" -ge "$at_min" ] || return 1                  # まだ指定時刻前
-  echo "$today" > "$f"
+# 間隔指定("30m"/"2h"/"90s"/"45"=分) を秒に変換。不正なら 1 を返す。
+to_seconds() {
+  local v="$1" n u
+  n="${v%[smhd]}"; u="${v#"$n"}"
+  [[ "$n" =~ ^[0-9]+$ ]] || return 1
+  case "$u" in
+    s) echo "$n";;
+    h) echo $(( n * 3600 ));;
+    d) echo $(( n * 86400 ));;
+    m|"") echo $(( n * 60 ));;     # 単位なしは「分」（"⚪分間隔"の既定）
+    *) return 1;;
+  esac
+}
+
+# 間隔スケジュールの発火判定（前回から指定間隔以上たっていれば true=0 を返し lastrun を更新）。
+#   $1 = state キー（例 gh, deps）, $2 = 間隔指定（"30m"/"2h"/"90s"/"45"=分）。
+due_every() {
+  local key="$1" spec="$2" f now last secs
+  secs=$(to_seconds "$spec") || { log warn "poll $key: 不正な間隔指定 '$spec'（例: 30m/2h/90s/45）"; return 1; }
+  f="$STATE_DIR/poll-$key.lastrun"
+  now=$(date +%s); last=$(cat "$f" 2>/dev/null || echo 0)
+  [ $((now - last)) -ge "$secs" ] || return 1
+  echo "$now" > "$f"
+  return 0
+}
+
+# ── cron 書式スケジュール（cron デーモンには依存せず、書式だけ自前 bash で評価する）──
+# 単一フィールドのマッチ。$1=フィールド式（* / a / a-b / a,b / */s / a-b/s）, $2=現在値, $3=*用の最小値。
+_cron_field() {
+  local spec="$1" cur="$2" min="$3" part lo hi step parts
+  cur=$((10#$cur))
+  IFS=',' read -ra parts <<< "$spec"   # read -ra はカンマ分割のみ（* を glob しない）
+  for part in "${parts[@]}"; do
+    step=1
+    [[ "$part" == */* ]] && { step="${part#*/}"; part="${part%/*}"; }
+    if   [ "$part" = "*" ];    then lo="$min"; hi=999999
+    elif [[ "$part" == *-* ]]; then lo="${part%-*}"; hi="${part#*-}"
+    else                            lo="$part"; hi="$part"; fi
+    lo=$((10#$lo)); hi=$((10#$hi)); step=$((10#$step))
+    [ "$cur" -ge "$lo" ] && [ "$cur" -le "$hi" ] && [ $(( (cur - lo) % step )) -eq 0 ] && return 0
+  done
+  return 1
+}
+
+# 5フィールドの cron 式が現在時刻にマッチするか。$1="分 時 日 月 曜"（曜は0-6, 0=日）。
+#   dom/dow は AND 判定（標準 cron の OR 例外までは踏襲しない＝直感どおり両方一致で発火）。
+cron_match() {
+  local mi h dom mon dow
+  read -r mi h dom mon dow <<< "$1"
+  [ -n "$dow" ] || { log warn "cron 式は5フィールド必須: '$1'"; return 1; }
+  _cron_field "$mi"  "$(date +%M)" 0 || return 1
+  _cron_field "$h"   "$(date +%H)" 0 || return 1
+  _cron_field "$dom" "$(date +%d)" 1 || return 1
+  _cron_field "$mon" "$(date +%m)" 1 || return 1
+  _cron_field "$dow" "$(date +%w)" 0 || return 1
+  return 0
+}
+
+# cron スケジュールの発火判定（マッチする「分」に1回だけ true=0 を返す）。$1=key, $2=cron式。
+#   poller は POLL_TICK ごとに起きてこれを呼ぶ。同じ分での重複発火は lastmin で防ぐ。
+due_cron() {
+  local key="$1" expr="$2" f nowmin last
+  cron_match "$expr" || return 1
+  f="$STATE_DIR/poll-$key.lastmin"
+  nowmin=$(date +%Y%m%d%H%M); last=$(cat "$f" 2>/dev/null || echo "")
+  [ "$nowmin" = "$last" ] && return 1   # この分は既に走った
+  echo "$nowmin" > "$f"
   return 0
 }
 
