@@ -74,7 +74,10 @@ body=$(cat <<EOF
 EOF
 )
 
-if gh issue create -R "$slug" --title "🤖 [auto] $branch の CI 失敗: $wf" --body "$body" --label "$CI_ISSUE_LABEL" >/dev/null 2>&1; then
+# CI 修正は調査＋検証(再CI待ち)で時間がかかりがちなので最初から loop:long を付ける
+# （timeout→再実行で文脈を二重払いするのを避ける。CI_ISSUE_LONG=false で無効化可）。
+long_label=(); [ "${CI_ISSUE_LONG:-true}" = true ] && long_label=(--label loop:long)
+if gh issue create -R "$slug" --title "🤖 [auto] $branch の CI 失敗: $wf" --body "$body" --label "$CI_ISSUE_LABEL" "${long_label[@]}" >/dev/null 2>&1; then
   : > "$marker"
   notify "🔧 $branch の CI が失敗 → issue 起票（$CI_ISSUE_LABEL）— $wf"
   log ci "filed CI failure run=#$runid conclusion=$conclusion label=$CI_ISSUE_LABEL"

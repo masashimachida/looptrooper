@@ -62,6 +62,7 @@ export DEPS_MAX_PER_RUN="${DEPS_MAX_PER_RUN:-2}"    # 1回の実行で作る iss
 export CI_WORKFLOW="${CI_WORKFLOW:-}"                  # 監視するワークフロー名 or ファイル名（例: e2e.yml）。空＝無効
 export CI_BRANCH="${CI_BRANCH:-$DEFAULT_BRANCH}"       # 監視するブランチ（既定は保護対象ブランチ=main）
 export CI_ISSUE_LABEL="${CI_ISSUE_LABEL:-loop:proposed}" # 起票ラベル（既定 proposed＝人間承認後。即修正なら loop）
+export CI_ISSUE_LONG="${CI_ISSUE_LONG:-true}"         # 起票時に loop:long も付ける（CI修正は長くなりがち＝timeout由来の再実行を避ける）。false で無効
 
 # ── ループ基盤のパス ──
 export LOOP_DIR="${LOOP_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
