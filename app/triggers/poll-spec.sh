@@ -28,6 +28,20 @@ slug=$(target_slug)
 [ -n "$slug" ] || { echo "ERROR: 対象 repo の slug を解決できません" >&2; exit 1; }
 
 spec_path="$TARGET_REPO_DIR/$SPEC_DIR"
+
+# spec を読む前に base ブランチを最新化する。poll-spec はローカル clone の作業ツリーを
+# 入力にするので、spec を後から push してもここを fetch しないと永遠に古いまま＝issue が
+# 作られない（実際にこれで踏んだ）。worktree は別物なのでベースへの reset は干渉しない。
+# ネットワーク等で失敗してもポーリング自体は落とさず、ディスク上の現状で続行する。
+if [ -d "$TARGET_REPO_DIR/.git" ]; then
+  if git -C "$TARGET_REPO_DIR" fetch origin --quiet 2>/dev/null \
+     && git -C "$TARGET_REPO_DIR" reset --hard "origin/$PR_BASE_BRANCH" --quiet 2>/dev/null; then
+    log spec "base '$PR_BASE_BRANCH' を最新化（spec 読み取り前）"
+  else
+    log warn "base '$PR_BASE_BRANCH' の最新化に失敗（ディスク上の現状で続行）"
+  fi
+fi
+
 [ -d "$spec_path" ] || { log spec "対象に $SPEC_DIR/ が無い（仕様書駆動は無効）"; exit 0; }
 
 # フェーズファイル一覧: NN-slug.md（NN>=01。00-overview.md は全体像なのでフェーズ扱いしない）。番号順。
