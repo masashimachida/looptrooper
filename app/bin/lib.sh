@@ -79,6 +79,17 @@ task_issue() {
   done
 }
 
+# タスク id → issue タイトル（通知に添える）。タスクファイル1行目 "# issue #N: <title>" から拾う。
+#   先頭の "# " と "issue #N: " 接頭辞を剥がしてタイトルだけ返す。無ければ空。
+task_title() {
+  local id="$1" f
+  for f in "$QUEUE_DIR/$id.md" "$AWAITING_DIR/$id.md" "$PROCESSED_DIR/$id.md" "$BLOCKED_DIR/$id.md"; do
+    [ -f "$f" ] || continue
+    head -1 "$f" | sed -E 's/^#+[[:space:]]*//; s/^issue #[0-9]+:[[:space:]]*//'
+    return
+  done
+}
+
 # タスクに紐づくタイムアウト秒（チェックポイントまでの待ち）。タスクファイルに
 # "task_timeout: <秒>" があればそれ（loop:long の issue 用に poll-gh が書く）、無ければ既定 TASK_TIMEOUT。
 task_timeout() {

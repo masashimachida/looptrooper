@@ -72,15 +72,16 @@ MD
 }
 
 route_result() {
-  local id="$1" status pr issue iurl
+  local id="$1" status pr issue iurl title
   status=$(result_field "$id" status)
   # 紐づく issue を解決（result の issue を優先、無ければタスク本文から）→ 通知に URL を添える。
   issue=$(result_field "$id" issue); [ -n "$issue" ] || issue=$(task_issue "$id")
   iurl=$(issue_url "$issue")
+  title=$(task_title "$id")   # 通知に issue タイトルを添える
   case "$status" in
     done)
       pr=$(result_field "$id" pr_url)
-      notify "✅ レビュー待ちの PR ができました: ${pr:-<URLなし>} ($id)${iurl:+ | issue: $iurl}"
+      notify "✅ レビュー待ちの PR ができました${title:+: $title}: ${pr:-<URLなし>} ($id)${iurl:+ | issue: $iurl}"
       log done "$id -> $pr"
       mv "$QUEUE_DIR/$id.md" "$PROCESSED_DIR/" 2>/dev/null || true
       ;;
@@ -92,7 +93,7 @@ route_result() {
       # 曖昧で issue に質問を投稿済み。人間の回答待ち＝再投函しない。
       # issue-<N>.awaiting を立て、poll-gh が回答検知で再投入する。
       [ -n "$issue" ] && : > "$STATE_DIR/issue-$issue.awaiting"
-      notify "❓ 確認待ち: issue #${issue:-?} に質問を投稿しました ($id)${iurl:+ | $iurl}"
+      notify "❓ 確認待ち: issue #${issue:-?}${title:+「$title」} に質問を投稿しました ($id)${iurl:+ | $iurl}"
       log needs_info "$id -> issue #${issue:-?} (awaiting human reply)"
       mv "$QUEUE_DIR/$id.md" "$AWAITING_DIR/" 2>/dev/null || true
       ;;
@@ -100,17 +101,17 @@ route_result() {
       # 規定時間超過で bot が中断・自己申告済み（issue に経過/理由/方針をコメント済み）。
       # 人間トリアージ待ち＝needs_info と同じく .awaiting で待機。人間は redo / タスク分割 / loop:long で再開する。
       [ -n "$issue" ] && : > "$STATE_DIR/issue-$issue.awaiting"
-      notify "⏸ 時間超過で中断: issue #${issue:-?} に経過を報告しました ($id) — redo / 分割 / loop:long で再開${iurl:+ | $iurl}"
+      notify "⏸ 時間超過で中断: issue #${issue:-?}${title:+「$title」} に経過を報告しました ($id) — redo / 分割 / loop:long で再開${iurl:+ | $iurl}"
       log timeout "$id -> issue #${issue:-?} (checkpoint, awaiting human triage)"
       mv "$QUEUE_DIR/$id.md" "$AWAITING_DIR/" 2>/dev/null || true
       ;;
     failed|blocked)
-      notify "⚠️ 要対応 [$status]: $id${iurl:+ | issue: $iurl}"
+      notify "⚠️ 要対応 [$status]${title:+: $title}: $id${iurl:+ | issue: $iurl}"
       comment_outcome "$id" "$status" "$issue"   # 結末を issue に残す（分離環境でも読める）
       mv "$QUEUE_DIR/$id.md" "$BLOCKED_DIR/" 2>/dev/null || true
       ;;
     *)
-      notify "⚠️ result が壊れている/欠落: $id（要レビュー扱い）${iurl:+ | issue: $iurl}"
+      notify "⚠️ result が壊れている/欠落${title:+: $title}: $id（要レビュー扱い）${iurl:+ | issue: $iurl}"
       comment_outcome "$id" "needs-review" "$issue" "result が壊れている/欠落（loop-report が正常に書けていない可能性）。"
       mv "$QUEUE_DIR/$id.md" "$BLOCKED_DIR/" 2>/dev/null || true
       ;;
@@ -118,9 +119,10 @@ route_result() {
 }
 
 process_one() {
-  local id="$1" iurl issue tmo
+  local id="$1" iurl issue tmo title
   issue=$(task_issue "$id")
   iurl=$(issue_url "$issue")   # 着手/タイムアウト/詰まり通知に issue URL を添える
+  title=$(task_title "$id")    # 通知に issue タイトルを添える
   tmo=$(task_timeout "$id")    # チェックポイントまでの待ち秒。loop:long なら長め（poll-gh が task に書く）
   rm -f "$RESULTS_DIR/$id.json"
   : > "$STATE_DIR/$id.inprogress"
@@ -135,7 +137,7 @@ process_one() {
   fi
 
   # 猶予を超えてまだ処理中＝実作業中。ここで初めて着手を通知する。
-  notify "🚀 タスク着手: $id${iurl:+ | issue: $iurl}"
+  notify "🚀 タスク着手${title:+: $title}: $id${iurl:+ | issue: $iurl}"
 
   if wait_result "$id" "$(( tmo > TRIAGE_GRACE ? tmo - TRIAGE_GRACE : tmo ))"; then
     rm -f "$STATE_DIR/$id.inprogress"; route_result "$id"; return
@@ -152,7 +154,7 @@ process_one() {
       ;;
     modal)
       tmux send-keys -t "$TMUX_SESSION" Escape 2>/dev/null || true
-      notify "⚠️ 権限モーダルで停止: $id${iurl:+ | issue: $iurl}"
+      notify "⚠️ 権限モーダルで停止${title:+: $title}: $id${iurl:+ | issue: $iurl}"
       comment_outcome "$id" "blocked" "$issue" "許可モーダルで停止（権限要求）。loop の settings 許可リスト（許可されていない操作）を確認のこと。"
       mv "$QUEUE_DIR/$id.md" "$BLOCKED_DIR/" 2>/dev/null || true
       ;;
@@ -167,11 +169,11 @@ process_one() {
       fi
       # 中断指示にも応答せず自己申告も来ない＝応答不能。crashed 扱いで再キュー（keeper が claude を立て直す）。
       tmux send-keys -t "$TMUX_SESSION" Escape 2>/dev/null || true
-      notify "⚠️ 中断報告も無応答: $id（応答不能とみなし再キュー）${iurl:+ | issue: $iurl}"
+      notify "⚠️ 中断報告も無応答${title:+: $title}: $id（応答不能とみなし再キュー）${iurl:+ | issue: $iurl}"
       ;;
     crashed|hung)
       tmux send-keys -t "$TMUX_SESSION" Escape 2>/dev/null || true
-      notify "⚠️ セッションが停止/クラッシュ: $id（keeper が再起動し再キューします）${iurl:+ | issue: $iurl}"
+      notify "⚠️ セッションが停止/クラッシュ${title:+: $title}: $id（keeper が再起動し再キューします）${iurl:+ | issue: $iurl}"
       # タスクは queue に残す＝再処理。keeper が claude を立て直す。
       ;;
   esac
