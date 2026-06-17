@@ -1,0 +1,59 @@
+# cp loop.yaml.example loop.yaml して非秘密の設定を書く。loop.yaml は gitignore 済み。
+# 形式: 「ENV_VAR名: 値」のフラットなマップ（キーは環境変数名そのまま）。値は1行。
+#   config.sh が yq でパースして環境変数に展開する（driver / poller / claude セッションが読む）。
+#   優先順位: .env / compose の環境変数 > この loop.yaml > 既定値。
+#   ※秘密（GitHub App 秘密鍵 / GH_TOKEN / Slack webhook / NOTIFY_CMD）は .env のまま。ここには書かない。
+#   ※値に ": "(コロン+空白) や先頭記号が要るときは "..." で囲む。
+
+# ── 対象リポジトリ ──
+TARGET_REPO_URL: https://github.com/xxxx/xxxx.git
+DEFAULT_BRANCH: main
+# PR_BASE_BRANCH: develop      # PR の向き先（未設定なら DEFAULT_BRANCH）。作業ブランチもここから切る
+
+# ── スタックコマンド（Verifier が回す。claude セッションに $TEST_CMD 等で継承）──
+BUILD_CMD: npm run build
+TEST_CMD: npm test
+LINT_CMD: npm run lint
+
+# ── claude のモデル / effort ──
+ANTHROPIC_MODEL: claude-sonnet-4-6   # 難所中心の対象だけ claude-opus-4-8 に
+EFFORT_LEVEL: medium                 # low/medium/high/xhigh/max/auto（空=claudeの既定）
+
+# ── commit identity ──
+GIT_USER_NAME: loop-bot
+GIT_USER_EMAIL: loop-bot@users.noreply.github.com
+
+# ── Remote Control（スマホ/claude.ai から閲覧。空で無効）──
+REMOTE_CONTROL_NAME: looptrooper
+
+# ── ポーラーの有効/無効（プロジェクト毎に取捨）──
+ENABLE_POLL_GH: true        # issue 取得（主入力）
+ENABLE_POLL_PR: true        # PR レビュー指摘取得（主入力）
+ENABLE_POLL_OUTCOME: true   # マージ後アウトカム観測
+ENABLE_POLL_DEPS: true      # 依存脆弱性 → 起票
+ENABLE_POLL_CI: true        # main の CI 失敗 → 起票（CI_WORKFLOW 未設定なら実質無効）
+
+# ── ポーラーの実行スケジュール（空=毎巡回 / "HH:MM"=毎日その時刻に1回）──
+# POLL_DEPS_AT: "03:00"
+# POLL_CI_AT: "09:00"
+# POLL_GH_AT:
+# POLL_PR_AT:
+# POLL_OUTCOME_AT:
+
+# ── 依存脆弱性の自動起票 ──
+AUDIT_CMD: npm audit --json
+DEPS_INTERVAL: 86400        # 監査間隔秒（既定24h）
+DEPS_MAX_PER_RUN: 2
+
+# ── main の CI 失敗を起票（GitHub Actions の結果受信）──
+# CI_WORKFLOW: e2e.yaml      # 監視するワークフロー名 or ファイル名。空=無効
+CI_BRANCH: main
+CI_ISSUE_LABEL: loop:proposed
+CI_ISSUE_LONG: true         # 起票時に loop:long も付ける（CI修正は長くなりがち）
+
+# ── タイミング（必要なら上書き。既定で十分なら省略可）──
+# TASK_TIMEOUT: 1200         # チェックポイントまでの待ち秒（既定20分）
+# TASK_TIMEOUT_LONG: 3600    # loop:long の issue 用（既定60分）
+# POLL_GH_INTERVAL: 900      # ポーラー巡回間隔秒（既定15分）
+# ISSUE_SETTLE_SECS: 180     # 新規 issue の配線待ち猶予
+# USAGE_BACKOFF: 1800        # usage limit 時のバックオフ秒

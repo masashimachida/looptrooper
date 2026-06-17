@@ -9,9 +9,8 @@ services:
     #   ホストの docker.sock は渡さない＝breakout してもこの箱(=使い捨ての VM/EC2)内に留まる前提。
     privileged: true
 
-    # ── ユーザー設定と秘密は .env に集約して丸ごと注入（単一ソース）──
-    #   TARGET_REPO_URL / BUILD_CMD / TEST_CMD / LINT_CMD /
-    #   GIT_USER_NAME / GIT_USER_EMAIL / TZ と、認証（GITHUB_APP_* または GH_TOKEN）をここから。
+    # ── 秘密は .env に（GitHub App 秘密鍵 / GH_TOKEN / SLACK_WEBHOOK_URL / NOTIFY_CMD / TZ）──
+    #   非秘密の設定は loop.yaml（下の volumes でマウント）。config.sh が yq でパースして展開する。
     #   ※ .env は「変数置換」用にも自動で読まれるが、コンテナに入れるには env_file が必要。
     env_file:
       - .env
@@ -22,6 +21,10 @@ services:
       - CLAUDE_CONFIG_DIR=/work/claude-home # Claudeサブスク認証を /work/claude-home に永続化
 
     volumes:
+      # 非秘密の設定（config.sh が yq でパースして環境変数に展開）。秘密は .env のまま。
+      #   ※ 事前に `cp loop.yaml.example loop.yaml` しておくこと（無いと docker がここに空ディレクトリを
+      #     作る＝config.sh は -f 判定で skip するので壊れはしないが紛らわしい）。
+      - ./loop.yaml:/work/loop.yaml:ro
       # 状態・結果・ログ。ホストの ./app/.loop を直接バインド＝ホストから可視＆
       # ホスト側 enqueue.sh もそのままドライバに届く（名前付きボリュームの隔離を回避）。
       - ./app/.loop:/work/loop/.loop

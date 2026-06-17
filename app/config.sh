@@ -4,6 +4,22 @@
 # 対象リポジトリが決まったら「未定」の箇所を埋めるだけで動く。
 # ─────────────────────────────────────────────────────────────
 
+# ── 非秘密設定を loop.yaml から読み込む（任意。秘密＝App秘密鍵/Slack/GH_TOKEN は .env のまま）──
+#   フラットな「ENV_VAR: 値」形式（キー＝環境変数名）。値は1行。
+#   優先順位: env（.env / compose）> loop.yaml > 既定。＝既に env にある値（.env の秘密・緊急上書き）が勝つ。
+#   yq が無い or ファイルが無ければ何もしない＝従来どおり .env だけで動く（フェイルセーフ）。
+#   ※ bash 限定の構文（${!var}・プロセス置換）を使うので bash の時だけ実行する。
+if [ -n "${BASH_VERSION:-}" ]; then
+  _cfg_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+  LOOP_CONFIG_YAML="${LOOP_CONFIG_YAML:-$_cfg_dir/../loop.yaml}"   # 箱レベルの1枚。コンテナでは /work/loop.yaml にマウント
+  if [ -f "$LOOP_CONFIG_YAML" ] && command -v yq >/dev/null 2>&1; then
+    while IFS='=' read -r _k _v; do
+      [ -n "$_k" ] || continue
+      [ -z "${!_k:-}" ] && export "$_k=$_v"      # env が空の時だけ YAML 値を採用（env 優先）
+    done < <(yq e 'to_entries[] | select(.value != null) | .key + "=" + (.value | tostring)' "$LOOP_CONFIG_YAML" 2>/dev/null)
+  fi
+fi
+
 # ── 対象リポジトリ（まだ未定。決まったら埋める）──
 export TARGET_REPO_URL="${TARGET_REPO_URL:-}"            # 例: https://github.com/you/repo.git（token認証なのでHTTPS）
 export TARGET_REPO_DIR="${TARGET_REPO_DIR:-/work/repo}"  # コンテナ内の clone 先

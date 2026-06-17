@@ -8,6 +8,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       tmux git jq ca-certificates curl less openssl \
     && rm -rf /var/lib/apt/lists/*
 
+# yq (mikefarah) ── config.sh が loop.yaml（非秘密設定）をパースするのに使う。
+#   debian apt の yq は別物(python版)なので公式バイナリを取得。
+RUN curl -fsSL "https://github.com/mikefarah/yq/releases/latest/download/yq_linux_$(dpkg --print-architecture)" \
+      -o /usr/local/bin/yq && chmod +x /usr/local/bin/yq
+
 # GitHub CLI (gh) ── 公式 apt リポジトリから
 RUN mkdir -p -m 755 /etc/apt/keyrings \
     && curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
