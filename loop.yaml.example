@@ -42,9 +42,8 @@ ENABLE_POLL_CI: true        # main の CI 失敗 → 起票（CI_WORKFLOW 未設
 # POLL_OUTCOME_CRON: "0 */4 * * *" # 4時間毎
 # POLL_TICK: 60                   # 基底起床間隔秒（cron は分粒度なので60s以下推奨。既定60）
 
-# ── 依存脆弱性の自動起票 ──
+# ── 依存脆弱性の自動起票（実行頻度は上の POLL_DEPS_CRON で。既定 毎日3時）──
 AUDIT_CMD: npm audit --json
-DEPS_INTERVAL: 86400        # 監査間隔秒（既定24h）
 DEPS_MAX_PER_RUN: 2
 
 # ── main の CI 失敗を起票（GitHub Actions の結果受信）──

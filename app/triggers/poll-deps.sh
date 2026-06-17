@@ -18,12 +18,8 @@ command -v gh >/dev/null 2>&1 || { echo "gh not installed" >&2; exit 1; }
 slug=$(target_slug)
 [ -n "$slug" ] || { echo "ERROR: 対象 repo の slug を解決できません" >&2; exit 1; }
 
-# ── 自己スロットル（夜間1回相当）。lastrun は .loop/state（バインドマウントで永続）──
-lastrun_file="$STATE_DIR/deps.lastrun"
-now=$(date +%s)
-last=$(cat "$lastrun_file" 2>/dev/null || echo 0)
-[ $((now - last)) -ge "$DEPS_INTERVAL" ] || exit 0   # まだ間隔内
-echo "$now" > "$lastrun_file"
+# 実行頻度は poller のスケジュール（POLL_DEPS_CRON、既定 "0 3 * * *"=毎日3時）が唯一の権威。
+# 内部の自己スロットルは廃止（cron と二重管理・cron での増回を握り潰す罠を避ける）。
 
 # ── 監査（対象 repo で実行。脆弱性ありだと exit!=0 なので握る）──
 audit_json=$(cd "$TARGET_REPO_DIR" && eval "$AUDIT_CMD" 2>/dev/null || true)
