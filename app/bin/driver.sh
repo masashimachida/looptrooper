@@ -135,6 +135,8 @@ process_one() {
   : > "$STATE_DIR/$id.inprogress"
 
   is_idle || log warn "pane not idle before injecting $id"
+  # 前タスクの会話文脈を捨ててから着手（コスト最適化。知識は .loop/memory 側にあるので安全）。
+  [ "${CLEAR_BETWEEN_TASKS:-true}" = true ] && clear_context
   inject "次のタスクを処理して: $QUEUE_DIR/$id.md"
 
   # トリアージ猶予: この間に skipped(や即 done) で結果が来たら着手通知を出さずにルーティング。

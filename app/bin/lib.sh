@@ -240,3 +240,17 @@ inject() {
   sleep 0.3
   tmux send-keys -t "$TMUX_SESSION" Enter
 }
+
+# タスク間でセッションの会話文脈をリセットする（Claude Code の /clear を注入）。
+#   タスクは互いに独立（worktree 隔離・issue 駆動・各タスクが開始時に .loop/memory を読む）で、
+#   タスクを跨ぐ知識は会話履歴ではなく .loop/memory のファイルに置く設計＝履歴を捨てても次タスクは
+#   メモリを読み直して同じ状態から始められる。これで累積文脈による毎タスクの入力トークン増
+#   （会話が伸びるほど二次関数的に増える）とオートコンパクト費を断つ＝コスト最適化。
+#   ※pane が idle（プロンプト）の時に呼ぶこと。/clear はスキルの利用可否には影響しない
+#     （次の「次のタスクを処理して」で loop-task は通常どおり起動する）。
+clear_context() {
+  tmux send-keys -t "$TMUX_SESSION" -l "/clear"
+  sleep 0.3
+  tmux send-keys -t "$TMUX_SESSION" Enter
+  sleep "${CLEAR_SETTLE:-1}"   # /clear 後にプロンプトが戻るのを待ってから次タスクを注入する
+}

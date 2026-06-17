@@ -111,6 +111,10 @@ export TASK_TIMEOUT_LONG="${TASK_TIMEOUT_LONG:-3600}" # loop:long ラベルの i
 export CHECKPOINT_GRACE="${CHECKPOINT_GRACE:-180}"   # 中断指示後、自己申告(loop-report --status timeout)が返るのを待つ上限秒。来なければ応答不能とみなし crashed 扱いで再キュー
 export TRIAGE_GRACE="${TRIAGE_GRACE:-60}"     # 着手通知の猶予秒。この間に skipped で返れば「着手」を通知しない（空振りは静かに）
 export POLL_INTERVAL="${POLL_INTERVAL:-5}"    # キュー監視間隔秒（仕事ゼロ＝この sleep だけ＝無課金）
+export CLEAR_BETWEEN_TASKS="${CLEAR_BETWEEN_TASKS:-true}"  # タスク毎に /clear して文脈累積を断つ（コスト最適化）。
+                                                          #   タスクは互いに独立＝跨ぐ知識は .loop/memory のファイル側にあるので履歴を捨てても安全。
+                                                          #   累積文脈による毎タスクの入力トークン増＋オートコンパクト費を断つ。false で従来どおり積みっぱなし。
+export CLEAR_SETTLE="${CLEAR_SETTLE:-1}"       # /clear 注入後、プロンプトが戻るのを待つ秒（次タスク注入までの安定待ち）
 export STUCK_RECHECK="${STUCK_RECHECK:-2}"    # classify_stuck の 2 回キャプチャ間隔
 export KEEPER_INTERVAL="${KEEPER_INTERVAL:-15}" # セッション生存チェック間隔
 export POLL_GH_INTERVAL="${POLL_GH_INTERVAL:-900}" # issue ポーリング間隔秒（LLM を呼ばない＝安い。既定15分）
