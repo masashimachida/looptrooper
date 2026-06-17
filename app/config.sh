@@ -8,6 +8,9 @@
 export TARGET_REPO_URL="${TARGET_REPO_URL:-}"            # 例: https://github.com/you/repo.git（token認証なのでHTTPS）
 export TARGET_REPO_DIR="${TARGET_REPO_DIR:-/work/repo}"  # コンテナ内の clone 先
 export DEFAULT_BRANCH="${DEFAULT_BRANCH:-main}"          # 直 push 禁止の保護対象（GitHub branch protection も併用）
+export PR_BASE_BRANCH="${PR_BASE_BRANCH:-$DEFAULT_BRANCH}" # ループが開く PR の向き先（base）。既定は DEFAULT_BRANCH(main)。
+                                                        #   develop 等に向けたい時に .env で上書き。作業ブランチ loop/<id> もこの base から切る。
+                                                        #   ※ session-keeper が config を source して tmux を起こすので claude セッションに継承される（$BUILD_CMD 等と同経路）。
 
 # ── GitHub 認証（2モード。bin/gh-token.sh が両対応）──
 #   推奨: GitHub App（短命 installation token を自動発行・ローテーション）。

@@ -52,7 +52,13 @@ description: ループのドライバから注入された1件のタスクを、
    - 曖昧でなく方針が立つなら、そのまま次へ。
 
 3. **隔離（Worktree）** — `git worktree add` で作業用ツリーを作り、ブランチ名は必ず `loop/<id>`。
-   - **main へは絶対に直接コミット/プッシュしない。** push は `loop/<id>` のみ。
+   - **作業ブランチは PR の向き先（base）から切る** — base は `$PR_BASE_BRANCH`（未設定なら `main`）。最新を取得してそこから分岐する:
+     ```bash
+     git fetch origin "${PR_BASE_BRANCH:-main}"
+     git worktree add <dir> -b loop/<id> "origin/${PR_BASE_BRANCH:-main}"
+     ```
+     （base を main 以外にする運用があるため。base から切らないと PR 差分に base↔main の差が混ざる。）
+   - **base ブランチへは絶対に直接コミット/プッシュしない。** push は `loop/<id>` のみ。
 
 4. **実装（Fixer）** — タスク内容を実装。変更は**最小・1タスク1目的**（PR を小さく保ち、レビュー可能性を維持＝comprehension debt を抑える）。
    - **編集前の調査は `research` サブエージェント（Haiku・読み取り専用）に委譲する** — 「どこを変えるか」「構造・規約・既存の類似実装」「使用箇所の検索」など広く読む探索は research に投げ、返ってきた要約（`path:line`）を起点に動く。**実際に編集するファイルだけ自分で読む**（広い探索をメインの Sonnet 文脈に溜めない＝コストと文脈の節約）。
@@ -65,8 +71,8 @@ description: ループのドライバから注入された1件のタスクを、
    - 5a / 5b いずれか fail なら `status=failed`。両方 green の時だけ次へ。
 
 6. **提案** — 検証が green の時だけ:
-   - `git push origin loop/<id>`（main 不可・force 不可）
-   - `gh pr create` で PR を開く（これが人間レビューへの引き渡し。**マージはしない**）
+   - `git push origin loop/<id>`（base 直 push 不可・force 不可）
+   - `gh pr create --base "${PR_BASE_BRANCH:-main}"` で PR を開く（向き先は base ブランチ。これが人間レビューへの引き渡し。**マージはしない**）
 
 6.5. **メモリ更新（学びの記録）— 次のタスクに効かせる** — 今回得た“**次に効く**”知識だけを `/work/loop/.loop/memory/` に簡潔に追記/更新する:
    - 新たに分かったコードベースの規約・ビルド/テスト/起動の癖・主要ファイルの在り処 → `conventions.md`
