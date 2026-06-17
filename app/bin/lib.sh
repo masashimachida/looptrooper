@@ -84,6 +84,24 @@ task_issue() {
   done
 }
 
+# 時刻スケジュールの発火判定（毎日 "HH:MM" 以降に1回だけ true=0 を返す）。
+#   $1 = state キー（例 gh, deps）, $2 = "HH:MM"（"HH" なら分は00扱い）。
+#   今日まだ走っておらず、現在時刻が指定時刻以降なら 0 を返し当日を記録。それ以外は 1。
+#   粒度は poller の巡回間隔（指定時刻を過ぎた最初の周回で発火）。cron を使わずに「⚪時実行」を実現する。
+due_daily() {
+  local key="$1" at="$2" f today last hh mm now_min at_min
+  f="$STATE_DIR/poll-$key.lastday"
+  today=$(date +%F)
+  last=$(cat "$f" 2>/dev/null || echo "")
+  [ "$today" = "$last" ] && return 1                       # 今日もう走った
+  hh=${at%%:*}; mm=${at#*:}; [ "$mm" = "$at" ] && mm=0      # "HH:MM" / "HH"
+  now_min=$(( 10#$(date +%H) * 60 + 10#$(date +%M) ))
+  at_min=$(( 10#$hh * 60 + 10#$mm ))
+  [ "$now_min" -ge "$at_min" ] || return 1                  # まだ指定時刻前
+  echo "$today" > "$f"
+  return 0
+}
+
 # タスク id → issue タイトル（通知に添える）。タスクファイル1行目 "# issue #N: <title>" から拾う。
 #   先頭の "# " と "issue #N: " 接頭辞を剥がしてタイトルだけ返す。無ければ空。
 task_title() {
