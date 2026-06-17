@@ -221,7 +221,15 @@ classify_stuck() {
   elif ! grep -qi 'esc to interrupt' <<<"$b" \
        && grep -qiE 'do you want|allow this|grant this|permission to' <<<"$tl" \
        && grep -qE '❯|[0-9]+\. (Yes|No|Allow|Don)' <<<"$tl"; then echo modal
-  elif grep -qi 'esc to interrupt' <<<"$b" || [ "$a" != "$b" ]; then echo working
+  # working 判定（＝詰まりではない）。順に:
+  #   (a) 生成中           : 'esc to interrupt'
+  #   (b) 背景エージェント待ち: メインスレッドはバックグラウンドのサブエージェント
+  #       （verify-runner 等）の完了を待って静止する＝画面が動かず esc も出ないが crash/hung ではない。
+  #       これを hung と誤判定して無言再キューしていた（実際は作業中）ので working に含める。
+  #   (c) 画面が変化        : a != b（スピナーのカウンタ更新等）
+  elif grep -qi 'esc to interrupt' <<<"$b" \
+       || grep -qiE 'background agent|waiting for [0-9]+ (background )?agent' <<<"$b" \
+       || [ "$a" != "$b" ]; then echo working
   else echo hung
   fi
 }
