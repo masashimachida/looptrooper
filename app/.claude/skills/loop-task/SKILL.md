@@ -95,8 +95,10 @@ description: ループのドライバから注入された1件のタスクを、
    - **5a. ビルド/テスト/lint の実行 → `verify-runner` サブエージェント（Haiku）** — `$BUILD_CMD` / `$TEST_CMD` / `$LINT_CMD` を**“そのまま”実行**（compose で渡される実値。**勝手に別コマンドへ置換しない**＝`docker build …` を `npm run build` 等に化けさせない。変数が空のときだけ推測可）。verify-runner には各変数の**展開後の実値**を渡す。返ってくるのは **PASS/FAIL と失敗時の最小抜粋だけ**（npm ci 等の長いログ全文はメイン文脈に持ち込まない＝安いモデルで消化させコストと文脈を節約）。verify-runner は各実行を `timeout ${VERIFY_TIMEOUT:-600}` で頭打ちにするので、サービス待ち等は **TIMEOUT(FAIL) として速やかに返る**（無限ハングしない）。TIMEOUT が返ったら環境不備を疑い、5a-0 に戻って整えてから再実行する。
    - **5b. コードレビュー → 別サブエージェント（Sonnet）** — `/code-review` で差分をレビュー。バグ検出の品質ゲートなので Haiku に落とさず Sonnet（model 既定=inherit）で行う。
    - 5a / 5b いずれか fail なら `status=failed`。両方 green の時だけ次へ。
-   - **5c. 後始末** — `$VERIFY_TEARDOWN_CMD` が設定されていれば、検証の**成否・中断いずれでも**最後に `verify-runner` で1回実行する
-     （立てたサービスの停止・ポート解放等。次タスクの setup がポート衝突等で詰まるのを防ぐ）。中断報告モードに入る時もこれだけは回してよい。
+   - **後始末は agent の仕事ではない。** 検証で立てた stack（サービス・ビルド成果物・dind の per-task
+     イメージ/ボリューム等）の掃除は、**driver がタスク境界で `$BETWEEN_TASKS_CMD` を必ず実行して回収する**
+     （成否・timeout・crash いずれでも）。だから agent 側で down/prune を回す必要はない＝あなたが途中で
+     中断・crash しても box が境界で片付ける。あなたは setup→検証→報告に集中する。
 
 6. **提案** — 検証が green の時だけ:
    - `git push origin loop/<id>`（base 直 push 不可・force 不可）

@@ -23,17 +23,20 @@ LINT_CMD: npm run lint
 #   docker compose exec -T app npm ci &&
 #   docker compose exec -T app npx prisma generate &&
 #   docker compose exec -T app npx prisma migrate deploy
-# 検証後（成否・中断いずれでも）の後始末（任意）。ポート解放・停止＋ dind のディスク肥大対策。
-#   compose down だけだとビルドキャッシュ／イメージが毎回累積し dind が満杯→docker 激遅→
-#   setup が数分に膨張→タイムアウト、を踏む。キャッシュは --keep-storage で一定量残しつつ刈る。
-# VERIFY_TEARDOWN_CMD: >-
-#   docker compose down -v;
-#   docker builder prune -f --keep-storage 3GB;
-#   docker image prune -f
 # ※ 上の例のように node もコンテナで動かす場合、BUILD/TEST/LINT は exec 形にする:
 # BUILD_CMD: docker compose exec -T app npm run build
 # TEST_CMD: docker compose exec -T app npm test
 # LINT_CMD: docker compose exec -T app npm run lint
+#
+# タスク境界の後始末（任意・driver が成否/timeout/crash いずれでも必ず実行・cwd 非依存）。
+#   dind で検証する構成では、毎タスクが固有名のタグ付きイメージ(~2GB)とボリュームを作り、
+#   timeout/crash で漏れて累積→dind 満杯→docker 激遅→タイムアウト、を踏む。境界で回収して断つ。
+#   driver は中身を知らない＝docker 知識はこの値だけに閉じる。dind 不使用の target は空でよい。
+# BETWEEN_TASKS_CMD: >-
+#   docker ps -aq | xargs -r docker rm -f;
+#   docker image prune -af;
+#   docker volume prune -f;
+#   docker builder prune -f --keep-storage 3GB
 
 # ── claude のモデル / effort ──
 ANTHROPIC_MODEL: claude-sonnet-4-6   # 難所中心の対象だけ claude-opus-4-8 に

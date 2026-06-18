@@ -262,3 +262,16 @@ clear_context() {
   tmux send-keys -t "$TMUX_SESSION" Enter
   sleep "${CLEAR_SETTLE:-1}"   # /clear 後にプロンプトが戻るのを待ってから次タスクを注入する
 }
+
+# タスク境界で「設定された後始末フック」を必ず1回走らせる（成否・timeout・crash いずれでも）。
+#   driver は中身を知らない＝スタック非依存。何を掃除するか（例: 内側 dind の残コンテナ/イメージ/
+#   ボリュームの prune）は $BETWEEN_TASKS_CMD（config/loop.yaml）に置く＝docker 知識は config 側だけ。
+#   狙い: verify で box が上げた stack（worktree 名=compose プロジェクト名ごとの固有イメージ~2GB＋
+#   postgres/匿名ボリューム）が、agent の crash/timeout で後始末されず累積するのを、box が境界で保証して断つ。
+#   未設定なら no-op（dind を使わない target では何もしない）。**タスク間でのみ呼ぶこと**（実行中の検証 stack を消さない）。
+run_between_tasks() {
+  [ -n "${BETWEEN_TASKS_CMD:-}" ] || return 0
+  log info "between-tasks cleanup フックを実行"
+  timeout "${BETWEEN_TASKS_TIMEOUT:-120}" bash -lc "$BETWEEN_TASKS_CMD" >/dev/null 2>&1 \
+    || log warn "between-tasks cleanup が非ゼロ終了（無視して継続）"
+}

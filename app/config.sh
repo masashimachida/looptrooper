@@ -53,8 +53,14 @@ export LINT_CMD="${LINT_CMD:-echo 'TODO: set LINT_CMD in config.sh'; false}"
 #   パッケージを足しても自動では入らない＝ここで `npm ci` 等を**必ず**走らせて新依存を反映する
 #   （でないと依存追加タスクが必ずコケる）。待機は必ず timeout で頭打ち（無限待機ループ禁止）。
 export VERIFY_SETUP_CMD="${VERIFY_SETUP_CMD:-}"
-# 検証後（成功・失敗・中断いずれでも）に走らせる後始末（任意）。ポート解放・コンテナ停止等。
-export VERIFY_TEARDOWN_CMD="${VERIFY_TEARDOWN_CMD:-}"
+# タスク境界（1件処理し終えた直後）に driver が必ず1回走らせる後始末フック（任意・スタック非依存）。
+#   driver は中身を知らない＝ここに置いた“不透明なコマンド”を実行するだけ。成否・timeout・crash いずれの
+#   結末でも走るので、agent が後始末できずに死んでも box が境界で回収を保証できる。
+#   主用途: 内側 dind の掃除（verify で上げた per-task の固有イメージ~2GB＋postgres/匿名ボリュームが
+#   累積→ディスク満杯→docker 激遅→timeout、を断つ）。**cwd 非依存**に書くこと（driver は LOOP_DIR から呼ぶ）。
+#   未設定なら no-op（dind を使わない target は空でよい）。docker 知識はこの値（config/loop.yaml）だけに閉じる。
+export BETWEEN_TASKS_CMD="${BETWEEN_TASKS_CMD:-}"
+export BETWEEN_TASKS_TIMEOUT="${BETWEEN_TASKS_TIMEOUT:-120}"   # フックの時間上限（秒。ハング防止）
 # verify-runner が1コマンドに掛ける時間上限（秒）。サービス未起動の DB を上限なしで待つ
 # 等の事故でループ全体が何分も溶けるのを防ぐ天井。超過は FAIL(TIMEOUT) 扱い＝呼び出し元が
 # 「環境が要る」と気づけるようにする（タスク全体のチェックポイント TASK_TIMEOUT より十分小さく）。

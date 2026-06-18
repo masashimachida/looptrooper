@@ -195,4 +195,5 @@ while true; do
   task=$(ls -1 "$QUEUE_DIR" 2>/dev/null | grep '\.md$' | head -1)
   if [ -z "${task:-}" ]; then sleep "$POLL_INTERVAL"; continue; fi  # 仕事ゼロ＝無課金
   process_one "${task%.md}"
+  run_between_tasks   # 設定された後始末フックを境界で必ず実行（成否/timeout/crash 問わず。中身は config 側）
 done
