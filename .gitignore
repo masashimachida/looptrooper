@@ -11,8 +11,8 @@ app/.loop/memory/*
 app/.loop/outcomes/*
 !app/.loop/**/.gitkeep
 
-# デプロイ固有の設定（雛形 loop.yaml.example は追跡・実体は gitignore）
-loop.yaml
+# デプロイ固有の設定（雛形 config/loop.yaml.example は追跡・実体は gitignore）
+config/loop.yaml
 
 # 認証情報は絶対に置かない
 .env

@@ -11,7 +11,7 @@
 #   ※ bash 限定の構文（${!var}・プロセス置換）を使うので bash の時だけ実行する。
 if [ -n "${BASH_VERSION:-}" ]; then
   _cfg_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-  LOOP_CONFIG_YAML="${LOOP_CONFIG_YAML:-$_cfg_dir/../loop.yaml}"   # 箱レベルの1枚。コンテナでは /work/loop.yaml にマウント
+  LOOP_CONFIG_YAML="${LOOP_CONFIG_YAML:-$_cfg_dir/../config/loop.yaml}"   # 箱レベルの1枚。コンテナでは /work/config/loop.yaml（compose の env で指定・config/ をディレクトリマウント）
   if [ -f "$LOOP_CONFIG_YAML" ] && command -v yq >/dev/null 2>&1; then
     while IFS='=' read -r _k _v; do
       [ -n "$_k" ] || continue

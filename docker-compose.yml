@@ -19,12 +19,16 @@ services:
     environment:
       - TARGET_REPO_DIR=/work/repo
       - CLAUDE_CONFIG_DIR=/work/claude-home # Claudeサブスク認証を /work/claude-home に永続化
+      - LOOP_CONFIG_YAML=/work/config/loop.yaml # 非秘密設定の所在（config/ をディレクトリでマウント）
 
     volumes:
       # 非秘密の設定（config.sh が yq でパースして環境変数に展開）。秘密は .env のまま。
-      #   ※ 事前に `cp loop.yaml.example loop.yaml` しておくこと（無いと docker がここに空ディレクトリを
-      #     作る＝config.sh は -f 判定で skip するので壊れはしないが紛らわしい）。
-      - ./loop.yaml:/work/loop.yaml:ro
+      #   ※ 事前に `cp config/loop.yaml.example config/loop.yaml` しておくこと。
+      #   ※ 単一ファイルではなく config/ を**ディレクトリごと**マウントする。単一ファイル bind mount は
+      #     エディタの atomic-replace（inode 変更）でコンテナ側の実体が stale/破損する事故があるため
+      #     （yq が壊れた古い実体を読み全設定が既定に落ちる）。ディレクトリマウントなら編集が即反映される。
+      #     秘密(.env)は config/ に置かない＝マウントに巻き込まない。
+      - ./config:/work/config:ro
       # 状態・結果・ログ。ホストの ./app/.loop を直接バインド＝ホストから可視＆
       # ホスト側 enqueue.sh もそのままドライバに届く（名前付きボリュームの隔離を回避）。
       - ./app/.loop:/work/loop/.loop
