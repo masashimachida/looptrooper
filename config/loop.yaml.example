@@ -23,8 +23,13 @@ LINT_CMD: npm run lint
 #   docker compose exec -T app npm ci &&
 #   docker compose exec -T app npx prisma generate &&
 #   docker compose exec -T app npx prisma migrate deploy
-# 検証後（成否・中断いずれでも）の後始末（任意）。ポート解放・停止等。
-# VERIFY_TEARDOWN_CMD: docker compose down -v
+# 検証後（成否・中断いずれでも）の後始末（任意）。ポート解放・停止＋ dind のディスク肥大対策。
+#   compose down だけだとビルドキャッシュ／イメージが毎回累積し dind が満杯→docker 激遅→
+#   setup が数分に膨張→タイムアウト、を踏む。キャッシュは --keep-storage で一定量残しつつ刈る。
+# VERIFY_TEARDOWN_CMD: >-
+#   docker compose down -v;
+#   docker builder prune -f --keep-storage 3GB;
+#   docker image prune -f
 # ※ 上の例のように node もコンテナで動かす場合、BUILD/TEST/LINT は exec 形にする:
 # BUILD_CMD: docker compose exec -T app npm run build
 # TEST_CMD: docker compose exec -T app npm test
