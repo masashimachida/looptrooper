@@ -49,12 +49,15 @@ GIT_USER_EMAIL: loop-bot@users.noreply.github.com
 # ── Remote Control（スマホ/claude.ai から閲覧。空で無効）──
 REMOTE_CONTROL_NAME: looptrooper
 
-# ── ポーラーの有効/無効（プロジェクト毎に取捨）──
-ENABLE_POLL_GH: true        # issue 取得（主入力）
+# ── ポーラーの有効/無効（全トリガ opt-in）──
+#   本体の既定は全て false ＝何もしない素の箱。使うトリガだけここで true にする。
+#   最低でも poll-gh（issue 取得＝主入力）を on にしないと箱は何も拾わない。
+ENABLE_POLL_GH: true        # issue 取得（主入力。これが無いと何も始まらない）
 ENABLE_POLL_PR: true        # PR レビュー指摘取得（主入力）
 ENABLE_POLL_OUTCOME: true   # マージ後アウトカム観測
-ENABLE_POLL_DEPS: true      # 依存脆弱性 → 起票
-ENABLE_POLL_CI: true        # main の CI 失敗 → 起票（CI_WORKFLOW 未設定なら実質無効）
+# ENABLE_POLL_SPEC: true    # spec/ からフェーズ毎に issue 群を自律分解（要 spec/）
+# ENABLE_POLL_DEPS: true    # 依存脆弱性 → 起票（※パーサは npm audit 形式前提。非 npm なら no-op）
+# ENABLE_POLL_CI: true      # main の CI 失敗 → 起票（要 CI_WORKFLOW）
 
 # ── ポーラーの実行スケジュール（cron 書式。空=既定間隔 POLL_GH_INTERVAL ごと）──
 #   標準5フィールド「分 時 日 月 曜」（曜 0-6, 0=日）。* / a-b / a,b / */s 対応。cron デーモン不要。

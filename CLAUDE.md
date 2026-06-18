@@ -78,6 +78,7 @@ trigger（poll-gh=issue / poll-pr=PRレビュー指摘） → enqueue.sh → .lo
 - **アウトカム観測（結末をメモリに返す）**: `poll-outcome.sh`（poller が毎周回実行・LLM 非依存）がマージ済み loop PR の“その後”を見て、
   **revert された / 閉じた issue が再オープンした**という**負のアウトカム**を検出し、`.loop/memory/outcomes.md` に追記＋⚠️通知。`.loop/outcomes/` のマーカーで冪等。
   これで「テスト緑」という代理指標でなく**現実の結末**がメモリに返り、loop-task が次に同じ轍を踏まないよう参照する（＝検証の自己採点を現実で補正する）。
+- **トリガは全て opt-in（本体既定 false）**: `ENABLE_POLL_<NAME>`（GH/PR/OUTCOME/DEPS/CI/SPEC）の**本体既定は全て false ＝何もしない素の箱**。使うトリガだけ `config/loop.yaml` で `true` にする（poll-gh＝主入力すら明示的に on）。狙いは本体を inert に保ち、挙動を config 側の意思表示だけで決めること。新しいトリガを足す時もこの規約（既定 false）に揃える。
 - **ポーラーの実行スケジュール（cron 書式・ポーラー毎）**: `poller.sh` は `POLL_TICK`（既定60s）で起き、各ポーラーの予定を判定する（`run_poll`＝`ENABLE_POLL_<NAME>` トグルと併せて捌く）。**cron デーモンには依存せず、cron の“書式”だけ自前 bash（`lib.sh` の `cron_match`／`_cron_field`）で評価する**（＝「番人は素の bash」を保ったまま表現力だけ cron に揃える）。`POLL_<NAME>_CRON`（GH/PR/OUTCOME/DEPS/CI）で:
   - **空** → 既定間隔 `POLL_GH_INTERVAL`（15分）ごと（後方互換・`due_every`／`state/poll-<name>.lastrun`。deps/ci は中でさらに self-throttle）
   - **cron式**（標準5フィールド「分 時 日 月 曜」, `*` `a-b` `a,b` `*/s` 対応）→ マッチする分に1回（`due_cron`／同分重複は `state/poll-<name>.lastmin` で抑止・TZ 基準）。例 `"*/30 * * * *"`=30分毎, `"0 3 * * *"`=毎日3時, `"0 9 * * 1-5"`=平日9時。

@@ -138,16 +138,18 @@ export KEEPER_INTERVAL="${KEEPER_INTERVAL:-15}" # セッション生存チェッ
 export POLL_GH_INTERVAL="${POLL_GH_INTERVAL:-900}" # issue ポーリング間隔秒（LLM を呼ばない＝安い。既定15分）
 export ISSUE_SETTLE_SECS="${ISSUE_SETTLE_SECS:-180}" # 新規 issue の猶予秒。作成直後（依存登録などの配線が未完）の issue は1周見送る＝「作成→ポーリング→依存登録」のレースで未ブロック着手するのを防ぐ
 
-# ── ポーラー capability の有効/無効（プロジェクト毎に取捨）──────────
-#   false にすると poller.sh がそのポーラーを丸ごとスキップする（＝そのプロジェクトでは無効化）。
-#   poll-gh / poll-pr は主入力源なので既定 on。outcome / deps は任意機能。
-#   今後 spec 分解・observer 等を足す時も、この ENABLE_POLL_<NAME> 規約に揃える。
-export ENABLE_POLL_GH="${ENABLE_POLL_GH:-true}"           # issue 取得（主入力）
-export ENABLE_POLL_PR="${ENABLE_POLL_PR:-true}"           # PR レビュー指摘取得（主入力）
-export ENABLE_POLL_OUTCOME="${ENABLE_POLL_OUTCOME:-true}" # マージ後アウトカム観測（revert / issue 再オープン）
-export ENABLE_POLL_DEPS="${ENABLE_POLL_DEPS:-true}"       # 依存脆弱性 → issue 自動起票
-export ENABLE_POLL_CI="${ENABLE_POLL_CI:-true}"          # main の CI 失敗 → issue 自動起票（CI_WORKFLOW 未設定なら実質無効）
-export ENABLE_POLL_SPEC="${ENABLE_POLL_SPEC:-true}"      # spec/ からフェーズ毎に issue 群を自律分解（spec/ が無ければ実質無効）
+# ── ポーラー capability の有効/無効（全トリガ opt-in）──────────
+#   **本体の既定は全て false ＝何もしない素の箱**。トリガは「足し込む capability」で、
+#   使うものだけ config/loop.yaml で true にする（poll-gh すら opt-in＝主入力も明示的に on）。
+#   狙い: 本体を極力シンプル＝inert に保ち、挙動は config 側の意思表示だけで決まるようにする。
+#   true にすると poller.sh がそのポーラーを cron/間隔に従って回す。
+#   今後 observer 等を足す時も、この ENABLE_POLL_<NAME> 規約（既定 false）に揃える。
+export ENABLE_POLL_GH="${ENABLE_POLL_GH:-false}"           # issue 取得（主入力）
+export ENABLE_POLL_PR="${ENABLE_POLL_PR:-false}"           # PR レビュー指摘取得（主入力）
+export ENABLE_POLL_OUTCOME="${ENABLE_POLL_OUTCOME:-false}" # マージ後アウトカム観測（revert / issue 再オープン）
+export ENABLE_POLL_DEPS="${ENABLE_POLL_DEPS:-false}"       # 依存脆弱性 → issue 自動起票（※パーサは npm audit 形式前提）
+export ENABLE_POLL_CI="${ENABLE_POLL_CI:-false}"           # main の CI 失敗 → issue 自動起票（要 CI_WORKFLOW）
+export ENABLE_POLL_SPEC="${ENABLE_POLL_SPEC:-false}"       # spec/ からフェーズ毎に issue 群を自律分解（要 spec/）
 
 # ── ポーラーの実行スケジュール（任意・ポーラー毎・cron 書式）──────────
 #   cron デーモンには依存しない（書式だけ自前 bash=lib.sh の cron_match で毎 tick 評価）。
