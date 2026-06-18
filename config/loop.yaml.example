@@ -14,6 +14,21 @@ DEFAULT_BRANCH: main
 BUILD_CMD: npm run build
 TEST_CMD: npm test
 LINT_CMD: npm run lint
+# 検証前に必ず1回走る環境準備（任意）。BUILD/TEST/LINT が依存する起動・依存導入・生成等を集約。
+#   コンテナ内検証では node_modules 等が固定され、依存追加タスクは setup で入れ直さないとコケる。
+#   待機は必ず timeout で頭打ち（無限待機ループ禁止）。例（node をコンテナで動かす構成）:
+# VERIFY_SETUP_CMD: >-
+#   docker compose up -d &&
+#   timeout 90 bash -c 'until docker compose exec -T db pg_isready -U postgres; do sleep 2; done' &&
+#   docker compose exec -T app npm ci &&
+#   docker compose exec -T app npx prisma generate &&
+#   docker compose exec -T app npx prisma migrate deploy
+# 検証後（成否・中断いずれでも）の後始末（任意）。ポート解放・停止等。
+# VERIFY_TEARDOWN_CMD: docker compose down -v
+# ※ 上の例のように node もコンテナで動かす場合、BUILD/TEST/LINT は exec 形にする:
+# BUILD_CMD: docker compose exec -T app npm run build
+# TEST_CMD: docker compose exec -T app npm test
+# LINT_CMD: docker compose exec -T app npm run lint
 
 # ── claude のモデル / effort ──
 ANTHROPIC_MODEL: claude-sonnet-4-6   # 難所中心の対象だけ claude-opus-4-8 に

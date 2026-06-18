@@ -47,6 +47,14 @@ export GIT_USER_EMAIL="${GIT_USER_EMAIL:-loop-bot@users.noreply.github.com}"
 export BUILD_CMD="${BUILD_CMD:-echo 'TODO: set BUILD_CMD in config.sh'; false}"
 export TEST_CMD="${TEST_CMD:-echo 'TODO: set TEST_CMD in config.sh'; false}"
 export LINT_CMD="${LINT_CMD:-echo 'TODO: set LINT_CMD in config.sh'; false}"
+# 検証前に必ず1回走らせる環境準備（任意。空なら何もしない）。BUILD/TEST/LINT が依存する
+#   サービス起動・依存インストール・コード生成・マイグレーション等をここに集約する。
+#   重要: コンテナ内で検証する構成では node_modules が匿名 volume 等で固定され、タスクが
+#   パッケージを足しても自動では入らない＝ここで `npm ci` 等を**必ず**走らせて新依存を反映する
+#   （でないと依存追加タスクが必ずコケる）。待機は必ず timeout で頭打ち（無限待機ループ禁止）。
+export VERIFY_SETUP_CMD="${VERIFY_SETUP_CMD:-}"
+# 検証後（成功・失敗・中断いずれでも）に走らせる後始末（任意）。ポート解放・コンテナ停止等。
+export VERIFY_TEARDOWN_CMD="${VERIFY_TEARDOWN_CMD:-}"
 # verify-runner が1コマンドに掛ける時間上限（秒）。サービス未起動の DB を上限なしで待つ
 # 等の事故でループ全体が何分も溶けるのを防ぐ天井。超過は FAIL(TIMEOUT) 扱い＝呼び出し元が
 # 「環境が要る」と気づけるようにする（タスク全体のチェックポイント TASK_TIMEOUT より十分小さく）。
