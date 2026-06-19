@@ -1,0 +1,323 @@
+#!/usr/bin/env bash
+# ─────────────────────────────────────────────────────────────
+# loopctl ── LoopTrooper の「艦隊」CLI。
+#   project = 1 コンテナ のまま（隔離は Docker に任せる）、複数 project を1台でまとめて操作する。
+#   コンテナ内のスクリプト(driver/poller/keeper 等)は一切変えない＝薄い docker compose ラッパー。
+#
+#   構成3層:
+#     ① このリポジトリ = イメージのソース（共有・1回 build・loopctl 同梱）
+#     ② $LOOPCTL_HOME (~/.looptrooper) = 実行時データ（.env 共有1枚 ＋ projects/<name>/{config,.loop}）
+#     ③ Docker volume = `docker compose -p loop-<name>` が claude-home/docker-lib を自動 project 分離
+#
+#   認証(サブスク)は project 毎に1回 /login（refresh が使い切り回転＝共有不可。生涯1回・自走更新）。
+# ─────────────────────────────────────────────────────────────
+set -euo pipefail
+
+# リポジトリ(=イメージ源)は loopctl 自身の位置から解決（bin/ の1階層上）。データの所在は LOOPCTL_HOME。
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+LOOPCTL_HOME="${LOOPCTL_HOME:-$HOME/.looptrooper}"
+SHARED_ENV="$LOOPCTL_HOME/.env"
+COMPOSE_FILE="$REPO/container/docker-compose.yml"   # コンテナ関連は container/ 配下
+YAML_EXAMPLE="$REPO/container/config/loop.yaml.example"
+ENV_EXAMPLE="$REPO/.env.example"                     # 秘密の雛形は root
+PLACEHOLDER="github.com/xxxx/xxxx"   # loop.yaml.example の TARGET_REPO_URL 雛形（未編集判定）
+DRAIN_TIMEOUT="${DRAIN_TIMEOUT:-120}"   # upgrade の best-effort drain 上限（秒）
+
+die()  { echo "loopctl: $*" >&2; exit 1; }
+info() { echo "▶ $*"; }
+
+project_dir() { echo "$LOOPCTL_HOME/projects/$1"; }
+
+# 起動前の自己修復: claude-home の .claude.json が空/壊れていたら最新 valid backup から復元する。
+#   docker stop の SIGTERM が書き込み中の .claude.json を 0 バイトに切り詰める事故があり、
+#   空 JSON で claude が起動拒否→ keeper crash-loop→ コンテナ再起動ループに陥る。
+#   Claude Code 自身が backups/.claude.json.backup.* を残すので、そこから戻せば原因
+#   （stop / crash / OOM 何でも）を問わず自動で治る。認証本体は別ファイル(.credentials.json)で無傷。
+#   volume が未作成（初回・未ログイン）なら no-op。jq を持つ looptrooper:latest 内で判定する。
+repair_claude_home() {
+  local name="$1" vol="loop-$1_claude-home"
+  docker volume inspect "$vol" >/dev/null 2>&1 || return 0   # 未作成＝何もしない
+  docker run --rm -v "$vol":/h looptrooper:latest sh -c '
+    cd /h || exit 0
+    [ -f .claude.json ] || exit 0
+    if [ -s .claude.json ] && jq empty .claude.json >/dev/null 2>&1; then exit 0; fi  # 健全なら何もしない
+    for b in $(ls -t backups/.claude.json.backup.* 2>/dev/null); do
+      if [ -s "$b" ] && jq empty "$b" >/dev/null 2>&1; then
+        cp -p .claude.json "backups/.claude.json.corrupt.$(date +%s)" 2>/dev/null || true
+        cp -p "$b" .claude.json
+        echo "[repair] .claude.json was broken; restored from $b" >&2
+        exit 0
+      fi
+    done
+    echo "[repair] .claude.json broken and no valid backup found（要 /login かもしれません）" >&2
+  ' 2>&1 | sed "s/^/▶ ($name) /" || true
+}
+
+# docker compose を project 毎の環境で呼ぶ（compose の ${VAR} 置換に効かせる）。
+dc() {
+  local name="$1"; shift
+  local pdir; pdir="$(project_dir "$name")"
+  PROJECT="$name" \
+  LOOPCTL_ENV="$SHARED_ENV" \
+  LOOP_CONFIG_DIR="$pdir/config" \
+  LOOP_STATE_DIR="$pdir/.loop" \
+  docker compose -p "loop-$name" -f "$COMPOSE_FILE" "$@"
+}
+
+require_home()    { [ -d "$LOOPCTL_HOME/projects" ] || die "未初期化です。先に 'loopctl init' を実行してください。"; }
+require_project() {
+  [ -n "${1:-}" ] || die "project 名を指定してください。"
+  [ -d "$(project_dir "$1")" ] || die "project '$1' は存在しません（'loopctl create $1' で作成）。"
+}
+is_running() { [ -n "$(dc "$1" ps -q 2>/dev/null)" ]; }
+
+list_projects() { ls -1 "$LOOPCTL_HOME/projects" 2>/dev/null || true; }
+
+# ── init: 艦隊の土台を1回だけ作る（冪等） ──
+cmd_init() {
+  mkdir -p "$LOOPCTL_HOME/projects"
+  if [ ! -f "$SHARED_ENV" ]; then
+    cp "$ENV_EXAMPLE" "$SHARED_ENV"
+    info "共有 .env を作成: $SHARED_ENV （GitHub App 鍵などの秘密を埋めてください）"
+  else
+    info "共有 .env は既存: $SHARED_ENV （触りません）"
+  fi
+  info "共有イメージ looptrooper:latest を build します..."
+  LOOPCTL_ENV="$SHARED_ENV" docker compose -f "$COMPOSE_FILE" build
+  info "init 完了。次: loopctl create <project>"
+}
+
+# ── create: project の設定雛形を作る（人間が編集してから start） ──
+cmd_create() {
+  require_home
+  local name="${1:-}"; [ -n "$name" ] || die "使い方: loopctl create <project>"
+  local pdir; pdir="$(project_dir "$name")"
+  [ -d "$pdir" ] && die "project '$name' は既に存在します。"
+  mkdir -p "$pdir/config" "$pdir/.loop"
+  cp "$YAML_EXAMPLE" "$pdir/config/loop.yaml"
+  # Remote Control 名を project 名で既定化（重複回避。loop.yaml.example の値を上書き）。
+  if grep -q '^REMOTE_CONTROL_NAME:' "$pdir/config/loop.yaml"; then
+    sed -i.bak -E "s/^REMOTE_CONTROL_NAME:.*/REMOTE_CONTROL_NAME: $name/" "$pdir/config/loop.yaml" && rm -f "$pdir/config/loop.yaml.bak"
+  fi
+  info "作成: $pdir/config/loop.yaml"
+  echo "  → TARGET_REPO_URL と BUILD/TEST/LINT_CMD・ENABLE_POLL_* を編集してから 'loopctl start $name'"
+}
+
+# ── start: 起動（コンテナ内 supervisor が setup-target を自動実行） ──
+cmd_start() {
+  require_home; require_project "${1:-}"
+  local name="$1" yaml; yaml="$(project_dir "$name")/config/loop.yaml"
+  [ -f "$yaml" ] || die "loop.yaml がありません: $yaml"
+  grep -q "$PLACEHOLDER" "$yaml" && die "loop.yaml の TARGET_REPO_URL が雛形のままです。編集してから start してください。"
+  grep -qE '^[[:space:]]*TARGET_REPO_URL:[[:space:]]*\S' "$yaml" || die "loop.yaml に TARGET_REPO_URL がありません。"
+  [ -f "$SHARED_ENV" ] || die "$SHARED_ENV がありません（'loopctl init'）。"
+  info "起動: loop-$name"
+  repair_claude_home "$name"   # 壊れた .claude.json を起動前に自己修復（stop 由来の crash-loop を防ぐ）
+  dc "$name" up -d
+  info "起動しました。初回は 'loopctl login $name' でサブスク認証を1回行ってください。"
+}
+
+cmd_stop() {
+  require_home; require_project "${1:-}"
+  info "停止: loop-$1（状態と clone は保持）"
+  # グレースを延ばして claude が .claude.json を書き終える猶予を与える（切り詰め事故の予防）。
+  # それでも壊れることはあるので最終防衛は start 時の repair_claude_home。
+  dc "$1" stop -t "${STOP_GRACE:-30}"
+}
+
+# ── login: project 毎に1回 /login（認証は共有不可） ──
+cmd_login() {
+  require_home
+  local name="${1:-}"
+  if [ -z "$name" ]; then
+    for p in $(list_projects); do is_running "$p" && { name="$p"; break; }; done
+    [ -n "$name" ] || die "起動中の project がありません。先に 'loopctl start <project>'。"
+    info "起動中の project '$name' に接続します。"
+  else
+    require_project "$name"
+    is_running "$name" || die "project '$name' は起動していません（'loopctl start $name'）。"
+  fi
+  echo "tmux に接続します。Claude のプロンプトで /login → 認証後 Ctrl-b d で detach。"
+  dc "$name" exec -u node loop tmux attach -t loop
+}
+
+cmd_status() {
+  require_home; require_project "${1:-}"
+  is_running "$1" || die "project '$1' は起動していません。"
+  dc "$1" exec -u node loop ./bin/status.sh
+}
+
+cmd_logs() {
+  require_home; require_project "${1:-}"
+  local name="$1" which="${2:-driver}"
+  case "$which" in driver|session|poller|dockerd) ;; *) die "logs の対象は driver|session|poller|dockerd" ;; esac
+  is_running "$name" || die "project '$name' は起動していません。"
+  dc "$name" exec -u node loop tail -f ".loop/logs/$which.log"
+}
+
+cmd_list() {
+  require_home
+  printf '%-24s %-10s %s\n' PROJECT STATE REPO
+  for p in $(list_projects); do
+    local state repo
+    if is_running "$p"; then state="up"; else state="down"; fi
+    repo="$(grep -E '^[[:space:]]*TARGET_REPO_URL:' "$(project_dir "$p")/config/loop.yaml" 2>/dev/null | sed -E 's/^[^:]*:[[:space:]]*//')"
+    printf '%-24s %-10s %s\n' "$p" "$state" "${repo:-?}"
+  done
+}
+
+# ── upgrade: 共有イメージを焼き直し、project 毎に best-effort drain → recreate（ローリング） ──
+drain() {
+  local name="$1" sdir waited=0
+  sdir="$(project_dir "$name")/.loop/state"
+  info "  drain 中（最大 ${DRAIN_TIMEOUT}s）..."
+  while ls "$sdir"/*.inprogress >/dev/null 2>&1; do
+    [ "$waited" -ge "$DRAIN_TIMEOUT" ] && { info "  タスク継続中だが上限到達 → 中断して recreate（recover_inflight が再キュー）"; break; }
+    sleep 5; waited=$((waited+5))
+  done
+}
+upgrade_one() {
+  local name="$1"
+  is_running "$name" && drain "$name"
+  info "  recreate: loop-$name"
+  repair_claude_home "$name"   # recreate でも claude を再起動するので壊れていれば直す
+  dc "$name" up -d --force-recreate
+}
+cmd_upgrade() {
+  require_home
+  info "共有イメージ looptrooper:latest を再 build..."
+  LOOPCTL_ENV="$SHARED_ENV" docker compose -f "$COMPOSE_FILE" build
+  if [ "${1:-}" = "--all" ] || [ -z "${1:-}" ]; then
+    for p in $(list_projects); do info "upgrade: $p"; upgrade_one "$p"; done
+  else
+    require_project "$1"; info "upgrade: $1"; upgrade_one "$1"
+  fi
+  info "upgrade 完了。"
+}
+
+# ── gc: host(colima) レベルの孤児を刈る（死んだ箱・浮いた volume・dangling イメージ） ──
+#   per-task の箱の中の掃除は BETWEEN_TASKS_CMD（dind 内）の仕事。これは「箱の外＝host」専用。
+#   主な発生源: destroy し損ねた/旧命名(looptrooper-*)の死んだ箱が docker-lib(数GB) を抱えたまま残る、
+#   upgrade の焼き直しで浮いた旧イメージレイヤ(dangling)、参照の切れた匿名 volume。
+#   安全則: 現存 project（list_projects）と、生死問わずどれかのコンテナが参照中の volume は触らない。
+#          → 停止中 project も `stop`(=compose stop) でコンテナが残る＝参照中＝保護される。
+#            完全に参照が切れた孤児だけを対象にする。
+cmd_gc() {
+  require_home
+  local mode=ask
+  case "${1:-}" in --dry-run) mode=dry ;; -y|--yes) mode=yes ;; "" ) ;; *) die "使い方: loopctl gc [--dry-run|--yes]" ;; esac
+
+  local known; known=" $(list_projects | tr '\n' ' ') "
+  is_known() { case "$known" in *" $1 "*) return 0 ;; *) return 1 ;; esac; }
+  # compose project 名 / volume 名から「project の素名」を取り出す（loop-* も旧 looptrooper-* も対象）。
+  strip_prefix() { local s="$1"; s="${s#loop-}"; s="${s#looptrooper-}"; echo "$s"; }
+
+  local -a del_c=() del_v=()   # 削除予定（プラン表示してから実行）
+
+  # 1) 孤児コンテナ: 我々の命名(*-loop-N)で、compose project の素名が現存 project に無いもの。
+  while read -r id proj names status; do
+    [ -n "$id" ] || continue
+    case "$names" in *-loop-[0-9]*) ;; *) continue ;; esac   # LoopTrooper の箱の命名だけ対象
+    is_known "$(strip_prefix "$proj")" && continue           # 現存 project は生死問わず保護
+    del_c+=("$id|$names|$status")
+  done < <(docker ps -a --format '{{.ID}}|{{.Label "com.docker.compose.project"}}|{{.Names}}|{{.Status}}' | tr '|' ' ')
+
+  # 2) 参照中 volume 集合（孤児コンテナを“消した後”の参照を見たいので del_c を除外して算出）。
+  local referenced=" "
+  while read -r cid; do
+    [ -n "$cid" ] || continue
+    case " ${del_c[*]:-} " in *" $cid|"*) continue ;; esac   # これから消すコンテナの参照は無視
+    referenced+="$(docker inspect "$cid" --format '{{range .Mounts}}{{.Name}} {{end}}' 2>/dev/null) "
+  done < <(docker ps -aq)
+
+  # 3) 孤児 volume: per-project の docker-lib（dind キャッシュ）か匿名(hex) で、どこからも参照されず、素名も未知のもの。
+  #    claude-home（認証）は対象外＝サブスク refresh が使い切り回転で復元不可・サイズも小。消すなら destroy 経由で明示的に。
+  while read -r vol; do
+    [ -n "$vol" ] || continue
+    case " $referenced " in *" $vol "*) continue ;; esac      # 参照中＝保護
+    case "$vol" in
+      *_docker-lib)
+        is_known "$(strip_prefix "${vol%_docker-lib}")" && continue ;;  # 現存 project の docker-lib＝保護／未知＝孤児
+      *[!0-9a-f]*) continue ;;                                # docker-lib でも hex 匿名でもない（claude-home 含む）＝対象外
+      *) : ;;                                                  # 64桁 hex の匿名 volume＝対象
+    esac
+    del_v+=("$vol")
+  done < <(docker volume ls -q)
+
+  # 4) dangling イメージ（upgrade の焼き直しで浮いた旧レイヤ。タグ付き looptrooper:latest は対象外）。
+  local -a del_i=(); while read -r i; do [ -n "$i" ] && del_i+=("$i"); done < <(docker images -qf dangling=true)
+
+  # ── プラン表示 ──
+  if [ "${#del_c[@]}" -eq 0 ] && [ "${#del_v[@]}" -eq 0 ] && [ "${#del_i[@]}" -eq 0 ]; then
+    info "孤児なし。掃除するものはありません。"; return
+  fi
+  echo "── gc プラン（host=colima レベル） ──"
+  if [ "${#del_c[@]}" -gt 0 ]; then for c in "${del_c[@]}"; do echo "  コンテナ: ${c//|/  }"; done; fi
+  if [ "${#del_v[@]}" -gt 0 ]; then for v in "${del_v[@]}"; do
+    local sz; sz="$(docker run --rm -v "$v":/v alpine du -sh /v 2>/dev/null | cut -f1)"
+    echo "  volume:   $v  (${sz:-?})"
+  done; fi
+  if [ "${#del_i[@]}" -gt 0 ]; then echo "  dangling イメージ: ${#del_i[@]} 個"; fi
+  [ "$mode" = dry ] && { info "--dry-run。何も削除していません。"; return; }
+  if [ "$mode" = ask ]; then
+    read -r -p "上記を削除します。よろしいですか? [y/N] " ans
+    [ "$ans" = y ] || [ "$ans" = Y ] || { info "中止しました。"; return; }
+  fi
+
+  # ── 実行（順序: コンテナ → volume → イメージ。各 best-effort） ──
+  if [ "${#del_c[@]}" -gt 0 ]; then for c in "${del_c[@]}"; do docker rm -f "${c%%|*}" >/dev/null 2>&1 || true; done; fi
+  if [ "${#del_v[@]}" -gt 0 ]; then for v in "${del_v[@]}"; do docker volume rm "$v" >/dev/null 2>&1 || true; done; fi
+  if [ "${#del_i[@]}" -gt 0 ]; then docker image prune -f >/dev/null 2>&1 || true; fi
+  info "gc 完了（コンテナ ${#del_c[@]} / volume ${#del_v[@]} / イメージ ${#del_i[@]}）。"
+}
+
+# ── destroy: コンテナ・per-project volume・設定/状態を完全削除（確認あり） ──
+cmd_destroy() {
+  require_home; require_project "${1:-}"
+  local name="$1"
+  read -r -p "project '$name' を完全削除します（コンテナ・volume・$LOOPCTL_HOME/projects/$name）。よろしいですか? [y/N] " ans
+  [ "$ans" = y ] || [ "$ans" = Y ] || { info "中止しました。"; return; }
+  dc "$name" down -v 2>/dev/null || true
+  rm -rf "$(project_dir "$name")"
+  info "削除しました: $name"
+}
+
+usage() {
+  cat <<'USAGE'
+loopctl ── LoopTrooper 艦隊 CLI
+
+  loopctl init                          艦隊の土台を作る（.env 雛形 + 共有イメージ build）。1回だけ
+  loopctl create <project>              project の loop.yaml 雛形を作る（編集してから start）
+  loopctl start  <project>              起動（clone・設定流し込みは自動）
+  loopctl stop   <project>              停止（状態・clone は保持）
+  loopctl login  [project]              サブスク /login（project 毎に1回。省略時は起動中の最初）
+  loopctl status <project>              ダッシュボード表示
+  loopctl list                          project 一覧（up/down）
+  loopctl logs   <project> [driver|session|poller|dockerd]
+  loopctl upgrade [project|--all]       共有イメージ再build → drain → recreate（既定 --all）
+  loopctl gc [--dry-run|--yes]          host の孤児を刈る（死んだ箱・浮いた volume・dangling イメージ）
+  loopctl destroy <project>             完全削除（確認あり）
+
+  環境変数: LOOPCTL_HOME（既定 ~/.looptrooper）, DRAIN_TIMEOUT（既定 120s）
+USAGE
+}
+
+main() {
+  local cmd="${1:-}"; shift || true
+  case "$cmd" in
+    init)    cmd_init "$@" ;;
+    create)  cmd_create "$@" ;;
+    start)   cmd_start "$@" ;;
+    stop)    cmd_stop "$@" ;;
+    login)   cmd_login "$@" ;;
+    status)  cmd_status "$@" ;;
+    logs)    cmd_logs "$@" ;;
+    list|ls) cmd_list "$@" ;;
+    upgrade) cmd_upgrade "$@" ;;
+    gc)      cmd_gc "$@" ;;
+    destroy) cmd_destroy "$@" ;;
+    ""|-h|--help|help) usage ;;
+    *) die "未知のコマンド: $cmd（loopctl --help）" ;;
+  esac
+}
+main "$@"
