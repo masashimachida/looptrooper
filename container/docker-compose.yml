@@ -1,6 +1,9 @@
 services:
   loop:
     build: .
+    # イメージは1回 build して全 project で共有（loopctl が `-p loop-<name>` で多重起動しても焼き直さない）。
+    #   単一 project の直 `docker compose up` でも build → このタグで起動するので従来どおり動く。
+    image: looptrooper:latest
     init: true # PID1 ゾンビ刈り・シグナル処理
     restart: unless-stopped # 最外の番人: コンテナが死んだら立ち上げ直す
 
@@ -12,14 +15,18 @@ services:
     # ── 秘密は .env に（GitHub App 秘密鍵 / GH_TOKEN / SLACK_WEBHOOK_URL / NOTIFY_CMD / TZ）──
     #   非秘密の設定は loop.yaml（下の volumes でマウント）。config.sh が yq でパースして展開する。
     #   ※ .env は「変数置換」用にも自動で読まれるが、コンテナに入れるには env_file が必要。
+    #   ※ 艦隊運用では loopctl が LOOPCTL_ENV=~/.looptrooper/.env を export（全 project 共有の1枚）。
+    #     単一 project の直 `docker compose up` では既定でリポジトリ直下の .env を使う
+    #     （この compose は container/ 配下にあるので ../.env＝リポジトリ root の .env）。
     env_file:
-      - .env
+      - ${LOOPCTL_ENV:-../.env}
 
     # ── 固定の内部配線だけ（ユーザーが触らない＝.env に置かない）──
     environment:
       - TARGET_REPO_DIR=/work/repo
       - CLAUDE_CONFIG_DIR=/work/claude-home # Claudeサブスク認証を /work/claude-home に永続化
       - LOOP_CONFIG_YAML=/work/config/loop.yaml # 非秘密設定の所在（config/ をディレクトリでマウント）
+      - PROJECT=${PROJECT:-loop} # 艦隊での project 名（loopctl が設定。識別用・コア挙動には不要）
 
     volumes:
       # 非秘密の設定（config.sh が yq でパースして環境変数に展開）。秘密は .env のまま。
@@ -28,10 +35,12 @@ services:
       #     エディタの atomic-replace（inode 変更）でコンテナ側の実体が stale/破損する事故があるため
       #     （yq が壊れた古い実体を読み全設定が既定に落ちる）。ディレクトリマウントなら編集が即反映される。
       #     秘密(.env)は config/ に置かない＝マウントに巻き込まない。
-      - ./config:/work/config:ro
-      # 状態・結果・ログ。ホストの ./app/.loop を直接バインド＝ホストから可視＆
-      # ホスト側 enqueue.sh もそのままドライバに届く（名前付きボリュームの隔離を回避）。
-      - ./app/.loop:/work/loop/.loop
+      #   ※ 艦隊運用では loopctl が project 毎の場所を指す（LOOP_CONFIG_DIR=~/.looptrooper/projects/<name>/config）。
+      #     既定の ./config は container/config（この compose と同階層）＝単一 project の直起動は従来どおり。
+      - ${LOOP_CONFIG_DIR:-./config}:/work/config:ro
+      # 状態・結果・ログ。ホストの bind ＝ホストから可視＆ホスト側 enqueue.sh もそのままドライバに届く
+      # （名前付きボリュームの隔離を回避）。艦隊では project 毎（~/.looptrooper/projects/<name>/.loop）。
+      - ${LOOP_STATE_DIR:-./app/.loop}:/work/loop/.loop
       # Claude のサブスク認証情報を永続化（初回 /login を毎回やらないため）
       - claude-home:/work/claude-home
       # 内側 dockerd のデータ領域。実FS(名前付きvol)に置いて overlay on overlay を回避し、

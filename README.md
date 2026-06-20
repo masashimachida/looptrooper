@@ -1,122 +1,234 @@
 # LoopTrooper 🫡
 
-Addy Osmani の [Loop Engineering](https://addyosmani.com/blog/loop-engineering/) に着想を得た、
-**自律的なコード保守ループ**の骨組み。
+**自律的なコード保守ループの基盤。** `loop` ラベルを付けた GitHub issue を入力に、無人のエージェントが worktree 隔離 → 実装 → 検証 → PR 作成までを行う。マージは人間が行う。
 
-> 命令書（`loop` ラベルの GitHub issue）を出すだけ。あとは無人の「隊員（Trooper）」が
-> worktree に展開し、実装し、別班が検証し、PR を具申するまでを夜通し回す。
-> 賢く一発ではなく、**規律正しく・無数に・休まず**。
+このドキュメントは LoopTrooper を**ゼロから動かすための手順書**。設計の背景・仕組み・用語は [`doc/`](./doc/) を参照:
 
-> 思想: 「自分が毎回プロンプトを打つ代わりに、エージェントに自動でプロンプトを打つシステムを設計する」。
-> 構成要素 — ①外部トリガ(Automations) ②worktree隔離 ③Skills ④gh連携(Connectors) ⑤Fixer/Verifierサブエージェント ⑥状態ファイル。
-
-> ⚠️ これは**雛形（未テスト）**。対象リポジトリが決まったら `config.sh` を埋めて実地で通すこと。
+- [doc/architecture.md](./doc/architecture.md) — なぜこの形か（外部トリガ駆動・5つの罠・3層構造・dind・コスト）
+- [doc/mechanism.md](./doc/mechanism.md) — タスクのライフサイクルとトリガ仕様（issue/PR/deps/ci/spec/outcome・依存関係・redo/long・メモリ）
+- [doc/glossary.md](./doc/glossary.md) — 用語集（ドライバ・番人・Fixer/Verifier・dind 等の固有語）
 
 ---
 
-## アーキテクチャ（なぜこの形か）
+## 前提（必須要件）
 
-サブスク内・非対話API回避・ほぼ全自動、を満たすため **「開きっぱなしの対話セッションを外部トリガで駆動する」** 構成を採用。
+ホスト（コンテナを動かすマシン）に必要なもの:
 
+- **Docker Engine 24.0 以上** — 内側で dind / BuildKit を使うため。`privileged` コンテナを動かせること
+- **Docker Compose v2.20 以上**（`docker compose` サブコマンド形式）
+- **bash**（loopctl はホストで動く。macOS 標準の bash 3.2 でも可）
+- **git 2.5 以上**（任意。loopctl をこのリポジトリから clone する場合）
+
+アカウント・対象側に必要なもの:
+
+- **保守対象の GitHub リポジトリ**（private 可）。LoopTrooper 本体とは別物で、コンテナ内 `/work/repo` に clone される
+- **GitHub App**（推奨）または repo 単位の fine-grained PAT
+- **Claude のサブスク（Pro または Max）**。API キーは不要——対話セッションを使う
+
+---
+
+## ステップ1 — 対象 repo の安全装置（GitHub 側）
+
+対象 repo の `main` に branch protection を掛ける:
+
+- **Pull request 必須**（直接 push を禁止）
+- **force push 禁止 / ブランチ削除禁止**
+
+ループは `loop/<id>` ブランチへ push して PR を作るところまで行い、マージは人間が行う。
+
+---
+
+## ステップ2 — GitHub App を作る（推奨）
+
+1. **App を新規作成** — **Settings → Developer settings → GitHub Apps → New GitHub App**
+   - name: 任意（例 `myorg-looptrooper`）
+   - Homepage URL: 任意（リポジトリ URL でよい）
+   - Webhook: `Active` のチェックを**外す**（ポーリング駆動なので不要）
+
+2. **権限を付ける**（Repository permissions）
+
+   | 権限 | 用途 |
+   |---|---|
+   | Contents: **Read and write** | `git push`（loop/* ブランチ） |
+   | Pull requests: **Read and write** | `gh pr create` / 更新 |
+   | Issues: **Read and write** | issue 駆動トリガ＋コメント＋依存(blocked_by)の参照 |
+   | Metadata: **Read-only** | 必須（自動で付く） |
+
+   - **merge 用の権限は付けない**
+
+3. **App ID を控える** — 作成後の General ページに表示される数字をメモ
+
+4. **秘密鍵を生成** — General ページ下部の **Private keys → Generate a private key** で `.pem` を取得
+   - base64 で1行化して `GITHUB_APP_PRIVATE_KEY_B64` に使う:
+     ```bash
+     base64 -w0 your-app.private-key.pem   # macOS は: base64 -i your-app.private-key.pem | tr -d '\n'
+     ```
+
+5. **対象 repo に install** — App の **Install App** から対象リポジトリ**だけ**を選ぶ（`Only select repositories`）
+
+- **代替（PAT）**: App を作らないなら、対象 repo 1個に絞った fine-grained PAT（上表と同じ権限）を発行し `GH_TOKEN` に入れる。App が未設定のときだけ使われる
+
+---
+
+## ステップ3 — 起動する（`loopctl`・推奨）
+
+複数 project を1台でまとめて操作する薄い CLI `bin/loopctl` を使う。`project = 1 コンテナ` のまま、`init → create → start → login` で増減できる。
+
+```bash
+# PATH を通すと loopctl だけで叩ける（任意。~/.zshrc 等に追記）
+export PATH="$PWD/bin:$PATH"
+
+# 1) 共有の土台（1回だけ）。共有 .env 雛形を作り、共有イメージ looptrooper:latest を build。
+loopctl init
+vi ~/.looptrooper/.env          # 秘密を記入（全 project 共有・1枚）
+
+# 2) project を作る → loop.yaml を編集（対象 repo・BUILD/TEST/LINT・ENABLE_POLL_* 等）
+loopctl create myapp
+vi ~/.looptrooper/projects/myapp/config/loop.yaml
+
+# 3) 起動（clone・設定/認証の流し込みは自動）→ サブスク認証を1回
+loopctl start myapp
+loopctl login myapp             # claude 画面で /login → Ctrl-b d で detach（project 毎に1回）
 ```
-[外部トリガ: shell, ゼロ課金]               ← ①Automations
-  poller が定期ポーリング（唯一の入力源）: 'loop' ラベル issue ＋ PR への changes-requested レビュー
-        │ poll-gh.sh(issue) / poll-pr.sh(PRレビュー) → enqueue.sh（send-keysは呼ばない＝混線/並行を構造的に回避）
-        ▼
-  .loop/queue/<id>.md
-        │
-[単一常駐ドライバ driver.sh]  ← pane を触る唯一のプロセス
-        │ 固定フレーズだけ注入（本文はファイル）
-        ▼
-  tmux: claude（対話セッション・サブスク認証）
-        │ SKILL.md の手順で処理:
-        │   worktree隔離 → Fixer実装 → Verifier(別サブエージェント)が検証 → PR提案
-        ▼
-  loop-report → .loop/results/<id>.json  ← sentinel + status + 出力を統合 ⑥
-        │
-  driver がルーティング（done=PR通知 / failed・blocked=⚠️ / skipped=空振り）
 
-[番人] Docker restart → supervisor → session-keeper（claude生存）→ driver（タスク進捗）
+**`~/.looptrooper/.env`（秘密・全 project 共有1枚）** の中身:
+```dotenv
+# 認証は次のどちらか（App 推奨）:
+# (A) GitHub App ── 短命 token を自動発行
+GITHUB_APP_ID=123456
+GITHUB_APP_PRIVATE_KEY_B64=LS0tLS1CRUdJTi...（base64 -w0 した1行）
+# (B) 静的トークン（PAT / machine user）── App 系が未設定のときだけ使われる
+# GH_TOKEN=github_pat_xxxxxxxx
+
+# 任意
+SLACK_WEBHOOK_URL=https://hooks.slack.com/services/...   # あれば通知を Slack へ
+TZ=Asia/Tokyo
 ```
 
-### 5つの「罠」への対処（設計の要点）
-| 罠 | 対処 |
+**`projects/myapp/config/loop.yaml`（非秘密設定・project 毎）** の主な編集点:
+```yaml
+TARGET_REPO_URL: https://github.com/you/repo.git   # 必須
+BUILD_CMD: npm run build       # Verifier が回す実コマンド
+TEST_CMD:  npm test
+LINT_CMD:  npm run lint
+ENABLE_POLL_GH: true           # issue 取得。トリガは既定すべて false なので使うものを true にする
+ENABLE_POLL_PR: true           # PR レビュー対応を使うなら
+```
+> 設定の優先順位は **`.env` > `loop.yaml` > 既定（`config.sh`）**。秘密は `.env`、それ以外は `loop.yaml` に書く。
+
+### 日常運用（loopctl）
+```bash
+loopctl list                 # project 一覧（up/down）
+loopctl status myapp         # ダッシュボード（番人/認証/タスク/GitHub/メモリ/アウトカム）
+loopctl logs myapp driver    # ログ追尾（driver|session|poller|dockerd）
+loopctl stop myapp           # 停止（状態・clone は保持）
+loopctl upgrade --all        # 本体更新: 共有イメージ再build → project 毎に drain → recreate
+loopctl gc                   # host の孤児を刈る（死んだコンテナ・浮いた docker-lib・dangling イメージ）
+loopctl destroy myapp        # 完全削除（確認あり）
+```
+
+> **構成**: `~/.looptrooper/`（`.env` 共有1枚 ＋ `projects/<name>/{config/loop.yaml, .loop}`）。`LOOPCTL_HOME` で場所変更可。
+> **`/login` は project 毎に1回**（認証は project をまたいで共有できない）。一度ログインすれば再ログインは不要。
+
+---
+
+## スモークテスト（1件流して完走を確認）
+
+タスク入力は **`loop` ラベル付き issue に限定**。対象 repo に issue を立てて流す:
+
+```bash
+gh issue create -R <owner>/<repo> --label loop \
+  --title "smoke test" --body "READMEのtypoを1つ直してfeatureブランチでPRを開いて"
+```
+
+次の poll でループが拾う。PR が立てば完了＝`loopctl status myapp` / 通知に「PR ready」が出る。進行はログで追う:
+
+```bash
+loopctl logs myapp driver
+```
+
+---
+
+## 監視
+
+まず**一括ダッシュボード**を見れば、番人/認証/タスク/GitHub/メモリ/アウトカム/直近通知が一目で分かる:
+
+```bash
+loopctl status myapp
+```
+
+個別に追うとき（状態ファイルはホストの `~/.looptrooper/projects/myapp/.loop/` に出る）:
+
+| 見るもの | コマンド / 場所 |
 |---|---|
-| #1 注入タイミング | 単一ドライバ＋完了sentinel＋**短い固定フレーズ注入**（本文はファイル） |
-| #2 権限 | `acceptEdits`＋allowlist＋deny tail。**main直push禁止/feature-pushのみ/マージ手動**。番人は環境×権限の積 |
-| #3 並行 | ドライバが直列処理。enqueue はファイル投函のみ |
-| #4 監視/復旧 | 層状番人＋状態ファイルで冪等復旧＋「遅い/詰まった」区別＋usage上限sleep＋crash-loopブレーカ |
-| #5 出力取得 | ターミナルをparseしない。`loop-report` の result file に統合。verificationは**Verifier由来**（自己採点禁止） |
+| 判断系ログ | `loopctl logs myapp driver` |
+| 生ストリーム（全出力の記録） | `loopctl logs myapp session` |
+| Claude の画面を覗く | `loopctl login myapp`（detach: Ctrl-b → d） |
+| キューの中身 | `ls ~/.looptrooper/projects/myapp/.loop/{queue,blocked,processed}` |
+| ある結果の詳細 | `cat ~/.looptrooper/projects/myapp/.loop/results/<id>.json` |
+
+- 失敗の結末は対象 repo の issue にコメントされる（`gh issue view <N> --comments`）。
 
 ---
 
-## セットアップ
+## タスクの入れ方
 
-1. **対象リポジトリを決めて `config.sh` を埋める**
-   - `TARGET_REPO_URL`（必須）
-   - `BUILD_CMD` / `TEST_CMD` / `LINT_CMD`（Verifier が使う実コマンド）
+| やりたいこと | 方法 |
+|---|---|
+| 新規タスクを依頼 | 対象 repo の issue に **`loop` ラベル**を付ける（唯一の入力源） |
+| 着手順を制御 | GitHub ネイティブの issue dependencies（"blocked by"）。ブロック元が閉じるまで着手されない |
+| やり直しさせる | 既処理 issue に **`loop:redo` ラベル**を付けるだけ（iOS でもタップ可） |
+| 長時間タスクを許可 | issue に **`loop:long` ラベル**（チェックポイントを20分→60分に延長） |
+| PR の指摘に対応させる | ループの PR に**人間が changes-requested レビュー**を付ける（既存ブランチに push して更新） |
 
-2. **GitHub 側の安全装置（重要）**
-   - 対象 repo の `main` に **branch protection**: PR必須・force push禁止・削除禁止
-   - **認証は GitHub App 推奨**（短命 installation token を自動発行・ローテーション。bot として人間と区別できる）。
-     App を作成 → 対象 repo に install → 権限 Contents/Pull requests/Issues = Read and write。
-     `.env` に `GITHUB_APP_ID` と秘密鍵（`GITHUB_APP_PRIVATE_KEY_B64` ＝ PEM を `base64 -w0` した1行）。
-   - 代替として **repo 単位の fine-grained PAT**（machine user 推奨）でも可。その場合は `.env` に `GH_TOKEN=...`。
-
-3. **認証情報の最小化**
-   - コンテナに渡す秘密は **GitHub App の秘密鍵 1個だけ**（PAT 運用なら `GH_TOKEN` 1個）。ホストの gh auth / SSH鍵 / cloud鍵 は渡さない。
-   - トークン供給は `bin/gh-token.sh` に一元化。git は credential helper、`gh` は PATH ラッパー経由で毎回フレッシュなトークンを使う。
-
-4. **起動**
-   ```bash
-   docker compose build
-   docker compose up -d
-   docker compose exec -u node loop ./bin/setup-target.sh   # clone + 設定流し込み
-   # 初回のみ Claude のサブスクログイン:
-   docker compose exec -u node loop tmux attach -t loop      # /login して認証 → detach (Ctrl-b d)
-   ```
-
-5. **トリガ（issue 駆動のみ。設定不要）**
-   - タスク入力は対象 repo の **'loop' ラベル付き issue に限定**。supervisor 配下の poller が常駐ポーリングする（cron 不要）。
-   - 間隔は `POLL_GH_INTERVAL`（既定900秒。`.env` で上書き可）。`enqueue.sh` は poller 専用の内部プリミティブで、手動・git hook からは拒否される。
-
-6. **1件流して動作確認**
-   - 対象 repo に `loop` ラベルを付けた issue を立てる（例: 「READMEのtypoを1つ直してPRを開いて」）。
-   - 次の poll でループが拾い、`app/LOOP_STATE.md` / 通知に「PR ready」が出れば一周完走。
+> 各ラベル・トリガの詳しい挙動は [doc/mechanism.md](./doc/mechanism.md) を参照。
 
 ---
 
-## 運用
+## トラブルシュート
 
-- 人間が見るのは **`app/LOOP_STATE.md` の ⚠️ セクション**と、PR レビュー（=マージゲート）だけ。
-- 詳細ログ: `.loop/logs/driver.log`（判断系）/ `.loop/logs/session.log`（生ストリーム・forensics）。
-- **マージは必ず人間**。ループは feature ブランチ＋PR提案で止まる。
+| 症状 | 原因 / 対処 |
+|---|---|
+| `gh pr create` は通るが `git push` が認証エラー | credential helper(`gh-token.sh`)未設定 or 認証に Contents:write が無い。`setup-target.sh` 再実行＋App/PAT の権限確認 |
+| `git commit` が "who are you?" | identity 未設定。`GIT_USER_NAME/EMAIL` を設定 → `setup-target.sh` 再実行 |
+| タスクが `blocked/` に溜まる（権限） | 許可リスト不足。`.loop/logs` で止まったコマンドを確認し `.claude/settings.json` の allow を追加 |
+| ループが進まない・"usage limit" | サブスク上限。driver が自動でリセットまで sleep（`driver.log` に `usage limit`）。待てば再開 |
+| セッションが何度も落ちる | crash-loop ブレーカが停止＆通知。多くは**未ログイン**。`loopctl login`（または `tmux attach` で `/login`） |
+| タスクが拾われない | driver 未起動 or queue が空、もしくは `ENABLE_POLL_GH` が false。`pgrep -af driver.sh` と `loop.yaml` を確認 |
+| 起動が idle 待機のまま | `TARGET_REPO_URL` 未設定 or clone 失敗。`.env`/`loop.yaml` と `setup-target.sh` のログ確認 |
+| ディスクが膨らんで遅い/タスク停止 | dind の docker-lib 肥大。コンテナ内は `BETWEEN_TASKS_CMD` で、host の死んだコンテナ・浮いた volume は `loopctl gc` で刈る |
 
-## コスト（空振りの扱い）
-- 仕事がない間はトリガが沈黙＝**LLM 課金ゼロ**（ドライバはファイル監視 sleep のみ）。
-- 1タスクの処理コストは「トリアージ＋実装＋検証」の実作業分。
-- サブスクの使用量上限に当たったら、ドライバが**リセットまで自動 sleep**（無駄打ちしない）。
+---
 
-## ファイル
-ルートは「箱」（ビルド・デプロイ・ドキュメント）、`app/` が箱の中で動く本体。
-`Dockerfile` は `COPY app/ /work/loop` で app/ の中身だけを取り込む。
-```
-Dockerfile                 イメージ定義（app/ のみ取り込む / 非rootで起動）
-docker-compose.yml         restart=unless-stopped, init, 認証は .env 経由
-.env / .env.example        設定と秘密（GITHUB_APP_* または GH_TOKEN, SLACK_WEBHOOK_URL 等）
-app/config.sh              中央設定（ここを埋める）
-app/bin/supervisor.sh      keeper + driver + poller を起動（コンテナ CMD）
-app/bin/session-keeper.sh  tmux+claude 生存番人・crash-loopブレーカ
-app/bin/driver.sh          単一常駐ドライバ（キュー消化・sentinel待ち・stuck分類）
-app/bin/poller.sh          issue トリガの定期実行（常駐）
-app/bin/loop-report        Claude が最後に叩く報告コマンド（result file 生成）
-app/bin/enqueue.sh         poller がタスクを投函する内部プリミティブ（issue 由来のみ受理）
-app/bin/setup-target.sh    対象 repo clone + 設定流し込み
-app/bin/gh-token.sh        GitHub 認証トークン供給（App=短命token発行 / 静的GH_TOKEN）
-app/bin/status.sh          一括ダッシュボード（状態を1コマンドで表示）
-app/.claude/settings.json  対象 repo へ配布する権限プロファイル（allow/deny）
-app/.claude/skills/loop-task/  タスク処理手順（Fixer/Verifier/PR/loop-report）
-app/triggers/              入力/観測ポーリング（poll-gh=issue / poll-pr=PRレビュー / poll-outcome=アウトカム / poll-deps=依存脆弱性の自動起票）
-app/.loop/                 実行時状態（ホストにバインドマウント）
-app/LOOP_STATE.md          状態ボード（人間用）
-```
+## 設定リファレンス（主要変数）
+
+設定は `config.sh`（既定の単一ソース）に集約され、`loop.yaml`（非秘密）と `.env`（秘密）で上書きする。
+
+| 変数 | 意味（既定） |
+|---|---|
+| `TARGET_REPO_URL` | 対象 repo の URL（HTTPS・必須） |
+| `BUILD_CMD` / `TEST_CMD` / `LINT_CMD` | Verifier が回す検証コマンド |
+| `VERIFY_SETUP_CMD` / `BETWEEN_TASKS_CMD` | 検証の環境準備 / タスク境界の後始末（dind 内） |
+| `ANTHROPIC_MODEL` | claude セッションのモデル（既定 `claude-sonnet-4-6`。難所中心なら `claude-opus-4-8`） |
+| `PR_BASE_BRANCH` | ループが開く PR の向き先 base（既定 main） |
+| `TASK_TIMEOUT` / `TASK_TIMEOUT_LONG` | チェックポイントまでの待ち秒（既定 1200=20分 / `loop:long` は 3600=60分） |
+| `CHECKPOINT_GRACE` | 中断指示後、自己申告が返るのを待つ上限秒（既定 180） |
+| `ENABLE_POLL_*` | GH/PR/OUTCOME/DEPS/CI/SPEC トリガの on/off（**既定すべて false**） |
+| `POLL_GH_INTERVAL` / `POLL_TICK` | issue ポーリング間隔秒（既定 900）/ poller 基底起床間隔（既定 60） |
+| `POLL_<NAME>_CRON` | ポーラー毎の cron 式（空＝既定間隔。例 `0 3 * * *`） |
+| `CLEAR_BETWEEN_TASKS` | タスク毎に `/clear` で文脈を捨てる（既定 true） |
+| `USAGE_BACKOFF` | usage limit 時の sleep 秒（既定 1800） |
+| `CRASH_LIMIT` / `CRASH_WINDOW` | crash-loop ブレーカの閾値（既定 3 / 600） |
+| `SLACK_WEBHOOK_URL` / `NOTIFY_CMD` | 通知先（空ならログのみ。`.env` 側＝秘密） |
+
+### ディレクトリ（`.loop/`）
+| パス | 役割 |
+|---|---|
+| `queue/` | 未処理タスク（`<id>.md`） |
+| `results/` | 結果＝完了ファイル（`<id>.json`） |
+| `processed/` | 完了（done/skipped） |
+| `blocked/` | 要対応（failed/blocked） |
+| `awaiting/` | 回答待ち（needs_info/timeout） |
+| `state/` | in-progress マーカ・トリガの既処理印 |
+| `memory/` | タスクを跨ぐ学習（PR に混入しない） |
+| `logs/` | driver.log / session.log |

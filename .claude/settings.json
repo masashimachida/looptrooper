@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "defaultMode": "acceptEdits",
+    "allow": [
+      "Read",
+      "Bash(bash -n:*)",
+      "Bash(git status)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)",
+      "Bash(ls:*)",
+      "Bash(cat:*)",
+      "Bash(docker compose build:*)",
+      "Bash(docker compose up:*)",
+      "Bash(docker compose logs:*)",
+      "Bash(docker compose exec:*)"
+    ],
+    "deny": [
+      "Read(./.env)"
+    ]
+  }
+}

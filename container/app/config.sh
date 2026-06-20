@@ -133,6 +133,7 @@ export CLEAR_BETWEEN_TASKS="${CLEAR_BETWEEN_TASKS:-true}"  # タスク毎に /cl
                                                           #   タスクは互いに独立＝跨ぐ知識は .loop/memory のファイル側にあるので履歴を捨てても安全。
                                                           #   累積文脈による毎タスクの入力トークン増＋オートコンパクト費を断つ。false で従来どおり積みっぱなし。
 export CLEAR_SETTLE="${CLEAR_SETTLE:-1}"       # /clear 注入後、プロンプトが戻るのを待つ秒（次タスク注入までの安定待ち）
+export CLEAR_IDLE_WAIT="${CLEAR_IDLE_WAIT:-30}" # clear/注入の前に pane が idle（プロンプト復帰）になるのを待つ上限秒。result ファイルは loop-report で出るが Claude はその後も締めを書くため、idle を待たずに撃つと /clear が生成中に刺さって取りこぼす（＝文脈が消えない）レースを閉じる
 export STUCK_RECHECK="${STUCK_RECHECK:-2}"    # classify_stuck の 2 回キャプチャ間隔
 export KEEPER_INTERVAL="${KEEPER_INTERVAL:-15}" # セッション生存チェック間隔
 export POLL_GH_INTERVAL="${POLL_GH_INTERVAL:-900}" # issue ポーリング間隔秒（LLM を呼ばない＝安い。既定15分）

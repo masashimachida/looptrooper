@@ -1,0 +1,6 @@
+# ビルドコンテキストは container/。COPY app/ /work/loop に含めないもの。
+# .loop は実行時状態（バインドマウントで供給。秘密 .gh-token を含むのでイメージに焼かない）。
+app/.loop/
+# デプロイ固有の実体（雛形 .example は残す）
+config/loop.yaml
+**/.DS_Store

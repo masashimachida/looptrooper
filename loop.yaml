@@ -1,0 +1,65 @@
+# cp loop.yaml.example loop.yaml して非秘密の設定を書く。loop.yaml は gitignore 済み。
+# 形式: 「ENV_VAR名: 値」のフラットなマップ（キーは環境変数名そのまま）。値は1行。
+#   config.sh が yq でパースして環境変数に展開する（driver / poller / claude セッションが読む）。
+#   優先順位: .env / compose の環境変数 > この loop.yaml > 既定値。
+#   ※秘密（GitHub App 秘密鍵 / GH_TOKEN / Slack webhook / NOTIFY_CMD）は .env のまま。ここには書かない。
+#   ※値に ": "(コロン+空白) や先頭記号が要るときは "..." で囲む。
+
+# ── 対象リポジトリ ──
+TARGET_REPO_URL: https://github.com/masashimachida/sample_app.git
+DEFAULT_BRANCH: main
+# PR_BASE_BRANCH: develop      # PR の向き先（未設定なら DEFAULT_BRANCH）。作業ブランチもここから切る
+
+# ── スタックコマンド（Verifier が回す。claude セッションに $TEST_CMD 等で継承）──
+BUILD_CMD: docker build -t sample-verify .
+TEST_CMD: docker compose run --rm --no-deps nextapp sh -c "npm ci && npm test"
+LINT_CMD: true
+
+# ── claude のモデル / effort ──
+ANTHROPIC_MODEL: claude-sonnet-4-6 # 難所中心の対象だけ claude-opus-4-8 に
+EFFORT_LEVEL: medium # low/medium/high/xhigh/max/auto（空=claudeの既定）
+
+# ── commit identity ──
+#   App の bot 名義でコミットさせたい場合は bot のユーザーIDを調べて設定:
+#     gh api users/<app-slug>[bot] --jq .id
+#     GIT_USER_NAME: <app-slug>[bot]
+#     GIT_USER_EMAIL: <id>+<app-slug>[bot]@users.noreply.github.com
+GIT_USER_NAME: looptrooper
+GIT_USER_EMAIL: 292489863+looptrooper@users.noreply.github.com
+
+# ── Remote Control（スマホ/claude.ai から閲覧。空で無効）──
+REMOTE_CONTROL_NAME: loop-sample_app
+
+# ── ポーラーの有効/無効（プロジェクト毎に取捨）──
+ENABLE_POLL_GH: true # issue 取得（主入力）
+ENABLE_POLL_PR: true # PR レビュー指摘取得（主入力）
+ENABLE_POLL_OUTCOME: true # マージ後アウトカム観測
+ENABLE_POLL_DEPS: true # 依存脆弱性 → 起票
+ENABLE_POLL_CI: true # main の CI 失敗 → 起票（CI_WORKFLOW 未設定なら実質無効）
+
+# ── ポーラーの実行スケジュール（cron 書式。空=既定間隔 POLL_GH_INTERVAL ごと）──
+#   標準5フィールド「分 時 日 月 曜」（曜 0-6, 0=日）。* / a-b / a,b / */s 対応。cron デーモン不要。
+POLL_GH_CRON: "*/5 * * * *" # issue を5分毎に拾う
+POLL_PR_CRON: "*/10 * * * *" # PR レビューを10分毎
+POLL_DEPS_CRON: "0 3 * * *" # 依存監査は毎日3時
+POLL_CI_CRON: "*/5 * * * *" # CI 失敗チェックは5分毎
+POLL_OUTCOME_CRON: "0 */4 * * *" # 4時間毎
+POLL_TICK: 60 # 基底起床間隔秒（cron は分粒度なので60s以下推奨。既定60）
+
+# ── 依存脆弱性の自動起票 ──
+AUDIT_CMD: npm audit --json
+DEPS_MAX_PER_RUN: 2
+
+# ── main の CI 失敗を起票（GitHub Actions の結果受信）──
+CI_WORKFLOW: e2e.yaml # 監視するワークフロー名 or ファイル名。空=無効
+CI_BRANCH: main
+CI_ISSUE_LABEL: loop:proposed
+CI_ISSUE_LONG: true # 起票時に loop:long も付ける（CI修正は長くなりがち）
+
+
+# ── タイミング（必要なら上書き。既定で十分なら省略可）──
+# TASK_TIMEOUT: 1200         # チェックポイントまでの待ち秒（既定20分）
+# TASK_TIMEOUT_LONG: 3600    # loop:long の issue 用（既定60分）
+# POLL_GH_INTERVAL: 900      # ポーラー巡回間隔秒（既定15分）
+# ISSUE_SETTLE_SECS: 180     # 新規 issue の配線待ち猶予
+# USAGE_BACKOFF: 1800        # usage limit 時のバックオフ秒

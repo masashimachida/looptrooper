@@ -1,23 +1,26 @@
-# ループの実行時状態（本体は app/ 配下に移動）
-app/.loop/queue/*
-app/.loop/processed/*
-app/.loop/blocked/*
-app/.loop/results/*
-app/.loop/done/*
-app/.loop/logs/*
-app/.loop/state/*
-app/.loop/awaiting/*
-app/.loop/memory/*
-app/.loop/outcomes/*
-!app/.loop/**/.gitkeep
+# ループの実行時状態（本体は container/app/ 配下）
+container/app/.loop/queue/*
+container/app/.loop/processed/*
+container/app/.loop/blocked/*
+container/app/.loop/results/*
+container/app/.loop/done/*
+container/app/.loop/logs/*
+container/app/.loop/state/*
+container/app/.loop/awaiting/*
+container/app/.loop/memory/*
+container/app/.loop/outcomes/*
+!container/app/.loop/**/.gitkeep
 
-# デプロイ固有の設定（雛形 config/loop.yaml.example は追跡・実体は gitignore）
-config/loop.yaml
+# デプロイ固有の設定（雛形 container/config/loop.yaml.example は追跡・実体は gitignore）
+container/config/loop.yaml
+
+# 艦隊運用の実行時データ（~/.looptrooper 配下が既定。リポジトリ内に置いた場合の保険）
+projects/
 
 # 認証情報は絶対に置かない
 .env
 *.token
 *.pem
 claude-home/
-app/.loop/.gh-token
-app/.loop/.gh-installation-id
+container/app/.loop/.gh-token
+container/app/.loop/.gh-installation-id

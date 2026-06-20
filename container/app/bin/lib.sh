@@ -188,6 +188,20 @@ is_idle() {
   [ "$a" = "$b" ] && ! grep -qi 'esc to interrupt' <<<"$b"
 }
 
+# pane が idle（プロンプトに復帰）になるまで最大 timeout 秒待つ。idle で 0、超過で 1。
+#   タスク境界で clear/注入する前に呼ぶ。完了判定は result ファイル（loop-report）だが、
+#   Claude はファイルを書いた後も締めの出力を続ける＝ファイル出現＝idle ではない。
+#   ここで idle を待たずに /clear を撃つと前タスクの生成中に刺さって取りこぼし、
+#   文脈が消えない（ユーザー体感「clear が効いてない」）レースになるため、必ず待つ。
+wait_idle() {
+  local timeout="${1:-30}" start=$SECONDS
+  while ! is_idle; do
+    [ $((SECONDS - start)) -ge "$timeout" ] && return 1
+    sleep 1
+  done
+  return 0
+}
+
 # result file(=sentinel) の出現を待つ。timeout で 1 を返す。
 wait_result() {
   local id="$1" timeout="$2" waited=0
@@ -257,6 +271,13 @@ inject() {
 #   ※pane が idle（プロンプト）の時に呼ぶこと。/clear はスキルの利用可否には影響しない
 #     （次の「次のタスクを処理して」で loop-task は通常どおり起動する）。
 clear_context() {
+  # 入力欄に被さっている interstitial を先に Escape で退かす（重要）:
+  #   Claude Code の周期アンケート "How is Claude doing this session?" や、/clear タイプ時の
+  #   スラッシュコマンド補完ポップアップが被さっていると、続く Enter がそちら（選択肢/補完）に
+  #   吸われ、/clear が入力欄に未送信のまま残留する＝文脈が消えない実害を踏んだ。
+  #   idle 時に呼ぶ前提（driver は wait_idle 後に呼ぶ）なので、この Escape が生成を中断する心配はない。
+  tmux send-keys -t "$TMUX_SESSION" Escape
+  sleep 0.3
   tmux send-keys -t "$TMUX_SESSION" -l "/clear"
   sleep 0.3
   tmux send-keys -t "$TMUX_SESSION" Enter
