@@ -104,6 +104,15 @@ route_result() {
       log needs_info "$id -> issue #${issue:-?} (awaiting human reply)"
       mv "$QUEUE_DIR/$id.md" "$AWAITING_DIR/" 2>/dev/null || true
       ;;
+    plan)
+      # プランモード: コードに触れず issue にコメントで方針/設計を応答済み。人間の返信待ち（議論継続）。
+      # needs_info と同じく .awaiting で待機＝人間が返信すれば poll-gh が再投函しまた応答する。
+      # 実装に移すときは人間が loop:plan を外して loop に付け替える（poll-gh が plan2impl で昇格）。
+      [ -n "$issue" ] && : > "$STATE_DIR/issue-$issue.awaiting"
+      notify "💬 プラン応答: issue #${issue:-?}${title:+「$title」} にコメントしました ($id) — 実装するなら loop:plan を外して loop に${iurl:+ | $iurl}"
+      log plan "$id -> issue #${issue:-?} (plan reply, awaiting human)"
+      mv "$QUEUE_DIR/$id.md" "$AWAITING_DIR/" 2>/dev/null || true
+      ;;
     timeout)
       # 規定時間超過で bot が中断・自己申告済み（issue に経過/理由/方針をコメント済み）。
       # 人間トリアージ待ち＝needs_info と同じく .awaiting で待機。人間は redo / タスク分割 / loop:long で再開する。

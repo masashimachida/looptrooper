@@ -41,73 +41,119 @@ gh issue list -R "$target_slug" --label "loop:redo" --state open --json number 2
     log redo "issue #$n: loop:redo により再着手可能化（state クリア）"
 done
 
-gh issue list -R "$target_slug" --label loop --state open --json number,title,createdAt,labels 2>/dev/null \
-| jq -c '.[]' 2>/dev/null | while read -r row; do
-    num=$(jq -r '.number' <<<"$row")
-    title=$(jq -r '.title' <<<"$row")
-    created=$(jq -r '.createdAt // ""' <<<"$row")
-    labels=$(jq -r '[.labels[].name] | join(",")' <<<"$row")   # loop:long 等の属性ラベル判定に使う
-    seen="$STATE_DIR/issue-$num.seen"
-    awaiting="$STATE_DIR/issue-$num.awaiting"
+# ── 1 issue のトリアージ（implement / plan 共通） ────────────────────
+#   mode=implement … 'loop' ラベル。曖昧でなければ実装〜PR まで自走する（従来の挙動）。
+#   mode=plan      … 'loop:plan' ラベル。コードに触れず issue にコメントで議論するだけ。
+#     awaiting/seen 判定は両モード共通（議論の往復も needs_info と同じ配管を再利用）。
+triage_issue() {
+  local row="$1" mode="$2"
+  local num title created labels seen awaiting fromplan blocked long_line unmet created_epoch age last
+  num=$(jq -r '.number' <<<"$row")
+  title=$(jq -r '.title' <<<"$row")
+  created=$(jq -r '.createdAt // ""' <<<"$row")
+  labels=$(jq -r '[.labels[].name] | join(",")' <<<"$row")   # loop:long / loop:plan 等の判定に使う
+  seen="$STATE_DIR/issue-$num.seen"
+  awaiting="$STATE_DIR/issue-$num.awaiting"
+  fromplan="$STATE_DIR/issue-$num.fromplan"
 
-    if [ -f "$awaiting" ]; then
-      # 回答待ち。最新コメントが bot の質問マーカーのままなら、まだ未回答＝待機継続。
-      last=$(gh issue view "$num" -R "$target_slug" --json comments \
-             -q '.comments[-1].body // ""' 2>/dev/null || echo "")
-      case "$last" in *"$AWAIT_MARKER"*) continue;; esac   # bot の質問が最新＝未回答
-      rm -f "$awaiting"                                    # 人間が返信した → 再投入へ
-    elif [ -f "$seen" ]; then
-      continue                              # 既処理(done/処理中)。従来どおり再投函しない
+  if [ "$mode" = "implement" ]; then
+    # loop:plan が付いている間はプランモードが所有＝実装しない（plan パスが処理する）。
+    case ",$labels," in *",loop:plan,"*) return;; esac
+    # プランモードからの昇格: 人間が loop:plan を外し loop だけにした＝「議論は済んだ、実装して」。
+    # プラン中の待機 state（awaiting/seen）を捨てて、最新の議論を踏まえた新規実装として走らせる
+    # （awaiting マーカーが最新コメントでも待たない＝ラベル切替そのものが実装の合図）。
+    if [ -f "$fromplan" ]; then
+      rm -f "$fromplan" "$awaiting" "$seen"
+      log plan2impl "issue #$num: loop:plan 解除 → 実装フローへ昇格（プラン state クリア）"
     fi
+  fi
 
-    # ── 新規 issue の猶予（settle）─────────────────────────────
-    # 作成直後の issue は依存(blocked_by)などの配線が未完のことがある。作成→ポーリング→
-    # 依存登録の隙間に走ると未ブロックのまま着手してしまうため、ISSUE_SETTLE_SECS 以内の
-    # issue は seen を立てず1周見送る（次 poll で配線完了後に再評価される）。
-    # 既に seen/awaiting を抜けてきた＝初回評価対象のみが対象。日付解釈失敗時は従来どおり続行（fail-open）。
-    if [ -n "$created" ]; then
-      created_epoch=$(date -d "$created" +%s 2>/dev/null || echo 0)
-      if [ "$created_epoch" -gt 0 ]; then
-        age=$(( $(date +%s) - created_epoch ))
-        if [ "$age" -lt "$ISSUE_SETTLE_SECS" ]; then
-          log settle "issue #$num は作成 ${age}s（< ${ISSUE_SETTLE_SECS}s）＝配線待ちで今周は見送り"
-          continue
-        fi
+  # ── awaiting / seen 判定（両モード共通） ──────────────────────
+  if [ -f "$awaiting" ]; then
+    # 回答待ち。最新コメントが bot の質問/プラン応答マーカーのままなら、まだ未回答＝待機継続。
+    last=$(gh issue view "$num" -R "$target_slug" --json comments \
+           -q '.comments[-1].body // ""' 2>/dev/null || echo "")
+    case "$last" in *"$AWAIT_MARKER"*) return;; esac   # bot が最新＝未回答
+    rm -f "$awaiting"                                  # 人間が返信した → 再投入へ
+  elif [ -f "$seen" ]; then
+    return                                # 既処理(done/処理中)。従来どおり再投函しない
+  fi
+
+  if [ "$mode" = "plan" ]; then
+    # プランモード: コードに触れず、方針/設計を検討して issue にコメントで応答するタスクを投函。
+    # 議論はゲートしない＝settle/依存(blocked_by)/loop:long は適用しない。
+    LOOP_SOURCE=issue ./bin/enqueue.sh "issue #$num (plan): $title" - <<EOF
+GitHub issue #$num「$title」について、**コードは一切変更せず**、方針・設計を検討して issue にコメントで応答してください。
+mode: plan
+loop-task の「プランモード」に従うこと（worktree・実装・PR は作らない＝読むのとコメントのみ）。
+issue 本文と全コメントを読み、最新の人間コメントに応答し、末尾に awaiting マーカーを付けて
+loop-report --status plan で報告してください。
+EOF
+    : > "$seen"
+    : > "$fromplan"   # 後で loop に切替えられた時に「プランからの昇格」を検知するためのマーカー
+    log plan "issue #$num: プランモードで投函（コード変更なし・議論）"
+    return
+  fi
+
+  # ── 以下 implement モード専用 ─────────────────────────────────
+  # ── 新規 issue の猶予（settle）─────────────────────────────
+  # 作成直後の issue は依存(blocked_by)などの配線が未完のことがある。作成→ポーリング→
+  # 依存登録の隙間に走ると未ブロックのまま着手してしまうため、ISSUE_SETTLE_SECS 以内の
+  # issue は seen を立てず1周見送る（次 poll で配線完了後に再評価される）。
+  # 既に seen/awaiting を抜けてきた＝初回評価対象のみが対象。日付解釈失敗時は従来どおり続行（fail-open）。
+  if [ -n "$created" ]; then
+    created_epoch=$(date -d "$created" +%s 2>/dev/null || echo 0)
+    if [ "$created_epoch" -gt 0 ]; then
+      age=$(( $(date +%s) - created_epoch ))
+      if [ "$age" -lt "$ISSUE_SETTLE_SECS" ]; then
+        log settle "issue #$num は作成 ${age}s（< ${ISSUE_SETTLE_SECS}s）＝配線待ちで今周は見送り"
+        return
       fi
     fi
+  fi
 
-    # ── 依存（blocked by）チェック ──────────────────────────────
-    # GitHub ネイティブの issue dependencies を REST で参照し、ブロック元が
-    # 未完了なら着手しない。未完了 = ブロック元が open、または closed でも not_planned。
-    # ブロック中は seen を立てず continue＝依存が解けた周回で自動的に再評価される。
-    blocked="$STATE_DIR/issue-$num.blocked"
-    unmet=$(gh api "repos/$target_slug/issues/$num/dependencies/blocked_by" \
-            --jq '[.[] | select(.state=="open" or .state_reason=="not_planned")] | length' \
-            2>/dev/null || true)
-    [ -n "$unmet" ] || { log warn "blocked_by 取得失敗 issue #$num（依存無視で続行）"; unmet=0; }
-    if [ "$unmet" -gt 0 ]; then
-      if [ ! -f "$blocked" ]; then          # 通知はブロック開始時の1回だけ（毎周回鳴らさない）
-        : > "$blocked"
-        notify "⛔ blocked: issue #$num は未完了の依存 ${unmet} 件待ち${title:+「$title」} | $(issue_url "$num")"
-        log blocked "issue #$num blocked by $unmet open/not-planned dep(s)"
-      fi
-      continue
+  # ── 依存（blocked by）チェック ──────────────────────────────
+  # GitHub ネイティブの issue dependencies を REST で参照し、ブロック元が
+  # 未完了なら着手しない。未完了 = ブロック元が open、または closed でも not_planned。
+  # ブロック中は seen を立てず return＝依存が解けた周回で自動的に再評価される。
+  blocked="$STATE_DIR/issue-$num.blocked"
+  unmet=$(gh api "repos/$target_slug/issues/$num/dependencies/blocked_by" \
+          --jq '[.[] | select(.state=="open" or .state_reason=="not_planned")] | length' \
+          2>/dev/null || true)
+  [ -n "$unmet" ] || { log warn "blocked_by 取得失敗 issue #$num（依存無視で続行）"; unmet=0; }
+  if [ "$unmet" -gt 0 ]; then
+    if [ ! -f "$blocked" ]; then            # 通知はブロック開始時の1回だけ（毎周回鳴らさない）
+      : > "$blocked"
+      notify "⛔ blocked: issue #$num は未完了の依存 ${unmet} 件待ち${title:+「$title」} | $(issue_url "$num")"
+      log blocked "issue #$num blocked by $unmet open/not-planned dep(s)"
     fi
-    rm -f "$blocked"                         # 依存解消 or 依存なし → ブロック解除
+    return
+  fi
+  rm -f "$blocked"                          # 依存解消 or 依存なし → ブロック解除
 
-    # loop:long が付いていれば driver のチェックポイントを長め（TASK_TIMEOUT_LONG）にする。
-    # （人間が「これは時間がかかる」とトリアージ済みの issue。task 本文に書いて driver が読む）
-    long_line=""
-    case ",$labels," in
-      *",loop:long,"*) long_line="task_timeout: $TASK_TIMEOUT_LONG"
-                       log long "issue #$num: loop:long → task_timeout=${TASK_TIMEOUT_LONG}s";;
-    esac
+  # loop:long が付いていれば driver のチェックポイントを長め（TASK_TIMEOUT_LONG）にする。
+  # （人間が「これは時間がかかる」とトリアージ済みの issue。task 本文に書いて driver が読む）
+  long_line=""
+  case ",$labels," in
+    *",loop:long,"*) long_line="task_timeout: $TASK_TIMEOUT_LONG"
+                     log long "issue #$num: loop:long → task_timeout=${TASK_TIMEOUT_LONG}s";;
+  esac
 
-    LOOP_SOURCE=issue ./bin/enqueue.sh "issue #$num: $title" - <<EOF
+  LOOP_SOURCE=issue ./bin/enqueue.sh "issue #$num: $title" - <<EOF
 GitHub issue #$num「$title」に対応してください。
 feature ブランチ loop/<id> で実装し、テストを通して PR を開いてください。
 要件が曖昧で実装方針を確定できない場合は、実装せず issue にコメントで質問すること（loop-task 手順参照）。
 $long_line
 EOF
-    : > "$seen"
-done
+  : > "$seen"
+}
+
+# ── 実装モード（loop ラベル）─ 従来の主入力。曖昧でなければ実装〜PR まで自走 ──
+gh issue list -R "$target_slug" --label loop --state open --json number,title,createdAt,labels 2>/dev/null \
+| jq -c '.[]' 2>/dev/null | while read -r row; do triage_issue "$row" implement; done
+
+# ── プランモード（loop:plan ラベル）─ コードに触れず議論。loop 無しでも拾う ──
+#   「issue を見に来て会話するが実装はしない」中間状態。実装したくなったら人間が
+#   loop:plan を外して loop に付け替える（plan2impl で昇格）。
+gh issue list -R "$target_slug" --label "loop:plan" --state open --json number,title,createdAt,labels 2>/dev/null \
+| jq -c '.[]' 2>/dev/null | while read -r row; do triage_issue "$row" plan; done
