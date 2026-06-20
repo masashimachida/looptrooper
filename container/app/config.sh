@@ -133,7 +133,9 @@ export CLEAR_BETWEEN_TASKS="${CLEAR_BETWEEN_TASKS:-true}"  # タスク毎に /cl
                                                           #   タスクは互いに独立＝跨ぐ知識は .loop/memory のファイル側にあるので履歴を捨てても安全。
                                                           #   累積文脈による毎タスクの入力トークン増＋オートコンパクト費を断つ。false で従来どおり積みっぱなし。
 export CLEAR_SETTLE="${CLEAR_SETTLE:-1}"       # /clear 注入後、プロンプトが戻るのを待つ秒（次タスク注入までの安定待ち）
-export CLEAR_IDLE_WAIT="${CLEAR_IDLE_WAIT:-30}" # clear/注入の前に pane が idle（プロンプト復帰）になるのを待つ上限秒。result ファイルは loop-report で出るが Claude はその後も締めを書くため、idle を待たずに撃つと /clear が生成中に刺さって取りこぼす（＝文脈が消えない）レースを閉じる
+export CLEAR_IDLE_WAIT="${CLEAR_IDLE_WAIT:-30}" # CLEAR_BETWEEN_TASKS=false の時だけ使う：注入前に pane が idle になるのを待つ上限秒。true の時は待たずに締め出力を Escape で割る（settle_pane）
+export CLEAR_SETTLE_TRIES="${CLEAR_SETTLE_TRIES:-6}" # /clear 前に pane を idle へ追い込む試行回数。loop-report 後の締め出力は使い捨てなので待たず Escape で割る（各試行 ~0.6s）
+export CLEAR_RETRIES="${CLEAR_RETRIES:-2}"     # /clear が着地（文脈クリア）しなかった時に撃ち直す回数。pane を検証して未着地なら再試行
 export STUCK_RECHECK="${STUCK_RECHECK:-2}"    # classify_stuck の 2 回キャプチャ間隔
 export KEEPER_INTERVAL="${KEEPER_INTERVAL:-15}" # セッション生存チェック間隔
 export POLL_GH_INTERVAL="${POLL_GH_INTERVAL:-900}" # issue ポーリング間隔秒（LLM を呼ばない＝安い。既定15分）

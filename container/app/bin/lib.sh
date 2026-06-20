@@ -270,18 +270,60 @@ inject() {
 #   （会話が伸びるほど二次関数的に増える）とオートコンパクト費を断つ＝コスト最適化。
 #   ※pane が idle（プロンプト）の時に呼ぶこと。/clear はスキルの利用可否には影響しない
 #     （次の「次のタスクを処理して」で loop-task は通常どおり起動する）。
+# pane を idle（プロンプト復帰）へ追い込む。**待たずに割る**のが要点:
+#   loop-report が result を書いた時点でタスクは完了済み＝その後の締め narration や
+#   周期アンケートのポップアップは**使い捨て**。礼儀正しく idle を待つと（旧 wait_idle）
+#   締め出力が長い／アンケートが居座ると上限まで待って結局 /clear を生成中に撃ち込み飲まれた。
+#   そこで Escape で締め出力を中断・ポップアップを退避しながら idle を確認する。idle で 0。
+settle_pane() {
+  local tries="${1:-6}"
+  while [ "$tries" -gt 0 ]; do
+    is_idle && return 0
+    tmux send-keys -t "$TMUX_SESSION" Escape 2>/dev/null || true   # 生成中なら中断・ポップアップなら退避
+    sleep 0.6
+    tries=$((tries-1))
+  done
+  is_idle
+}
+
+# /clear が着地（＝会話文脈がクリアされた）かを実用判定する。
+#   既知の失敗＝「/clear が入力欄に未送信のまま残留」。よって idle かつ末尾入力欄に
+#   "/clear" 残留が無ければ着地とみなす（成功時は composer が空＝末尾に出ない）。
+cleared() {
+  is_idle || return 1
+  ! pane_text | tail -3 | grep -q '/clear'
+}
+
+# タスク間でセッションの会話文脈をリセットする（Claude Code の /clear を注入）。
+#   タスクは互いに独立（worktree 隔離・issue 駆動・各タスクが開始時に .loop/memory を読む）で、
+#   タスクを跨ぐ知識は会話履歴ではなく .loop/memory のファイルに置く設計＝履歴を捨てても次タスクは
+#   メモリを読み直して同じ状態から始められる。これで累積文脈による毎タスクの入力トークン増
+#   （会話が伸びるほど二次関数的に増える）とオートコンパクト費を断つ＝コスト最適化。
+#   要点: 前タスクの締め出力は使い捨てなので**待たず Escape で割って**確実に /clear を着地させ、
+#         着地を検証して未着地なら撃ち直す（旧版は idle を待ち切れず /clear を飲まれていた）。
 clear_context() {
-  # 入力欄に被さっている interstitial を先に Escape で退かす（重要）:
-  #   Claude Code の周期アンケート "How is Claude doing this session?" や、/clear タイプ時の
-  #   スラッシュコマンド補完ポップアップが被さっていると、続く Enter がそちら（選択肢/補完）に
-  #   吸われ、/clear が入力欄に未送信のまま残留する＝文脈が消えない実害を踏んだ。
-  #   idle 時に呼ぶ前提（driver は wait_idle 後に呼ぶ）なので、この Escape が生成を中断する心配はない。
-  tmux send-keys -t "$TMUX_SESSION" Escape
-  sleep 0.3
-  tmux send-keys -t "$TMUX_SESSION" -l "/clear"
-  sleep 0.3
-  tmux send-keys -t "$TMUX_SESSION" Enter
-  sleep "${CLEAR_SETTLE:-1}"   # /clear 後にプロンプトが戻るのを待ってから次タスクを注入する
+  # 1) pane を確実にプロンプトへ戻す（締め出力・ポップアップは使い捨て＝待たず Escape で割る）。
+  settle_pane "${CLEAR_SETTLE_TRIES:-6}" || log warn "clear: pane を idle に戻せないまま /clear を試行する"
+  # 2) /clear を撃つ→着地を検証→未着地なら撃ち直す。
+  #   入力欄に被さる interstitial（周期アンケート "How is Claude doing this session?" や
+  #   スラッシュ補完ポップアップ）があると Enter がそちらに吸われ /clear が未送信で残る実害が
+  #   あったため、毎試行 Escape で退避してから打つ。
+  local tries="${CLEAR_RETRIES:-2}"
+  while :; do
+    tmux send-keys -t "$TMUX_SESSION" Escape
+    sleep 0.3
+    tmux send-keys -t "$TMUX_SESSION" -l "/clear"
+    sleep 0.3
+    tmux send-keys -t "$TMUX_SESSION" Enter
+    sleep "${CLEAR_SETTLE:-1}"   # /clear 後にプロンプトが戻るのを待つ
+    cleared && return 0
+    tries=$((tries-1))
+    [ "$tries" -le 0 ] && break
+    log warn "clear: /clear が着地せず再試行（残り ${tries}）"
+    settle_pane 3 || true
+  done
+  log warn "clear: /clear の着地を確認できず（文脈が残った可能性）"
+  return 1
 }
 
 # タスク境界で「設定された後始末フック」を必ず1回走らせる（成否・timeout・crash いずれでも）。

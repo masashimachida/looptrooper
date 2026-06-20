@@ -143,12 +143,17 @@ process_one() {
   rm -f "$RESULTS_DIR/$id.json"
   : > "$STATE_DIR/$id.inprogress"
 
-  # 前タスクの締め出力が終わり pane がプロンプトに戻るまで待つ（result ファイルは loop-report で
-  # 出るが Claude はその後も締めを書く＝ファイル出現≠idle）。idle を待たずに下の /clear・注入を撃つと
-  # 生成中に刺さって取りこぼし、文脈が消えない（=「clear が効かない」）レースになるため必ず待つ。
-  wait_idle "$CLEAR_IDLE_WAIT" || log warn "pane not idle within ${CLEAR_IDLE_WAIT}s before injecting $id"
   # 前タスクの会話文脈を捨ててから着手（コスト最適化。知識は .loop/memory 側にあるので安全）。
-  [ "${CLEAR_BETWEEN_TASKS:-true}" = true ] && clear_context
+  #   前タスクは既に result を出して完了済み＝締め出力は使い捨て。clear_context が**待たず
+  #   Escape で割って**確実に /clear を着地させ（内部で idle 化＋着地検証＋撃ち直し）、pane を
+  #   プロンプトに戻す。旧来の「wait_idle で30s 待ってから clear」は締め出力が長いと待ち切れず
+  #   /clear を生成中に撃ち込み飲まれていた（＝clear が効かない主因）ので廃止した。
+  if [ "${CLEAR_BETWEEN_TASKS:-true}" = true ]; then
+    clear_context || true
+  else
+    # clear 無効時は文脈を消さないので、せめて idle を待ってから注入する（従来挙動）。
+    wait_idle "$CLEAR_IDLE_WAIT" || log warn "pane not idle within ${CLEAR_IDLE_WAIT}s before injecting $id"
+  fi
   inject "次のタスクを処理して: $QUEUE_DIR/$id.md"
 
   # トリアージ猶予: この間に skipped(や即 done) で結果が来たら着手通知を出さずにルーティング。
