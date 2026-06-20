@@ -29,6 +29,17 @@ target_slug=$(target_slug)
 # bot が質問コメントの末尾に必ず入れる隠しマーカー（loop-task と一致させること）
 AWAIT_MARKER='<!-- loop:awaiting-reply -->'
 
+# issue-<N>.awaiting を消す＝もう回答待ちではない。route_result(move_awaiting) が刻んだ
+# awaiting_issue タグを頼りに、AWAITING_DIR に残った当該 issue のタスク md（再投函済みで
+# 誰にも読まれない残骸）を刈る。マーカーを消す全パス（redo / plan2impl / 返信再投函）で呼ぶ。
+purge_awaiting() {
+  local n="$1" f
+  for f in "$AWAITING_DIR"/*.md; do
+    [ -f "$f" ] || continue
+    grep -qxF "awaiting_issue: $n" "$f" && rm -f "$f"
+  done
+}
+
 # ── redo パス: 人間が 'loop:redo' を付けた issue を「もう一度やって」として再着手可能にする ──
 #   ファイルを触らず GitHub のラベル1つ（iOS でもタップ可）で再投入できる。人間ゲートは維持。
 #   既処理マーカー(.seen/.awaiting/.blocked)を消し、loop:redo を外して loop を付け直す
@@ -37,6 +48,7 @@ gh issue list -R "$target_slug" --label "loop:redo" --state open --json number 2
 | jq -r '.[].number' 2>/dev/null | while read -r n; do
     [ -n "$n" ] || continue
     rm -f "$STATE_DIR/issue-$n.seen" "$STATE_DIR/issue-$n.awaiting" "$STATE_DIR/issue-$n.blocked"
+    purge_awaiting "$n"
     gh issue edit "$n" -R "$target_slug" --remove-label "loop:redo" --add-label "loop" >/dev/null 2>&1 || true
     log redo "issue #$n: loop:redo により再着手可能化（state クリア）"
 done
@@ -64,6 +76,7 @@ triage_issue() {
     # （awaiting マーカーが最新コメントでも待たない＝ラベル切替そのものが実装の合図）。
     if [ -f "$fromplan" ]; then
       rm -f "$fromplan" "$awaiting" "$seen"
+      purge_awaiting "$num"
       log plan2impl "issue #$num: loop:plan 解除 → 実装フローへ昇格（プラン state クリア）"
     fi
   fi
@@ -75,6 +88,7 @@ triage_issue() {
            -q '.comments[-1].body // ""' 2>/dev/null || echo "")
     case "$last" in *"$AWAIT_MARKER"*) return;; esac   # bot が最新＝未回答
     rm -f "$awaiting"                                  # 人間が返信した → 再投入へ
+    purge_awaiting "$num"                              # 再投函済みの残骸 md を刈る
   elif [ -f "$seen" ]; then
     return                                # 既処理(done/処理中)。従来どおり再投函しない
   fi

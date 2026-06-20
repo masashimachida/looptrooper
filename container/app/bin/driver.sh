@@ -71,6 +71,16 @@ MD
     || log warn "failed to post outcome comment to issue #$issue ($id)"
 }
 
+# awaiting 行きのタスク md を退避する際、解決済み issue 番号を本文末尾に刻んでから移す。
+# poll-gh が再投函（＝もう awaiting でない）時に、この刻印を頼りに残骸 md を確実に刈れるようにする
+# ＝ファイル→issue を一意に辿る唯一の手掛かり（pr レビュー往復のように本文へ issue 番号が出ない
+# タスクでも、route_result は result から issue を解決済みなのでここで刻める）。
+move_awaiting() {
+  local id="$1" issue="$2"
+  [ -n "$issue" ] && printf '\nawaiting_issue: %s\n' "$issue" >> "$QUEUE_DIR/$id.md" 2>/dev/null
+  mv "$QUEUE_DIR/$id.md" "$AWAITING_DIR/" 2>/dev/null || true
+}
+
 route_result() {
   local id="$1" status pr issue iurl title
   status=$(result_field "$id" status)
@@ -102,7 +112,7 @@ route_result() {
       [ -n "$issue" ] && : > "$STATE_DIR/issue-$issue.awaiting"
       notify "❓ 確認待ち: issue #${issue:-?}${title:+「$title」} に質問を投稿しました ($id)${iurl:+ | $iurl}"
       log needs_info "$id -> issue #${issue:-?} (awaiting human reply)"
-      mv "$QUEUE_DIR/$id.md" "$AWAITING_DIR/" 2>/dev/null || true
+      move_awaiting "$id" "$issue"
       ;;
     plan)
       # プランモード: コードに触れず issue にコメントで方針/設計を応答済み。人間の返信待ち（議論継続）。
@@ -111,7 +121,7 @@ route_result() {
       [ -n "$issue" ] && : > "$STATE_DIR/issue-$issue.awaiting"
       notify "💬 プラン応答: issue #${issue:-?}${title:+「$title」} にコメントしました ($id) — 実装するなら loop:plan を外して loop に${iurl:+ | $iurl}"
       log plan "$id -> issue #${issue:-?} (plan reply, awaiting human)"
-      mv "$QUEUE_DIR/$id.md" "$AWAITING_DIR/" 2>/dev/null || true
+      move_awaiting "$id" "$issue"
       ;;
     timeout)
       # 規定時間超過で bot が中断・自己申告済み（issue に経過/理由/方針をコメント済み）。
@@ -119,7 +129,7 @@ route_result() {
       [ -n "$issue" ] && : > "$STATE_DIR/issue-$issue.awaiting"
       notify "⏸ 時間超過で中断: issue #${issue:-?}${title:+「$title」} に経過を報告しました ($id) — redo / 分割 / loop:long で再開${iurl:+ | $iurl}"
       log timeout "$id -> issue #${issue:-?} (checkpoint, awaiting human triage)"
-      mv "$QUEUE_DIR/$id.md" "$AWAITING_DIR/" 2>/dev/null || true
+      move_awaiting "$id" "$issue"
       ;;
     failed|blocked)
       notify "⚠️ 要対応 [$status]${title:+: $title}: $id${iurl:+ | issue: $iurl}"
