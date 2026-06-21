@@ -338,3 +338,34 @@ run_between_tasks() {
   timeout "${BETWEEN_TASKS_TIMEOUT:-120}" bash -lc "$BETWEEN_TASKS_CMD" >/dev/null 2>&1 \
     || log warn "between-tasks cleanup が非ゼロ終了（無視して継続）"
 }
+
+# タスク境界で、claude が起動したまま残った子孫プロセス（dev サーバ/watcher/run_in_background の
+# bash 等）を刈る。claude 本体・pane shell・tmux・dockerd・番人は一切触らない。
+#   Escape はタスクの生成を止めるだけ＝子プロセスは生き残る。timeout はキューが空だと次タスクの
+#   /clear が来ず無期限に居座るため、境界で確実に回収する。docker 経由の残骸は run_between_tasks が拾う。
+#   境界では claude は idle（報告/clear 済み）＝正当な子は無い → 子孫＝漏れと断定できる。
+#   **タスク間でのみ呼ぶこと**（実行中タスクの子プロセスを巻き込まない）。
+#   nohup/setsid で PID 1 に再養子された孤児は子孫から外れて取り逃すが、それは入口（settings.json
+#   deny）で塞ぐ＝出入口の二段構え。
+reap_task_procs() {
+  [ "${REAP_BETWEEN_TASKS:-true}" = true ] || return 0
+  local cpid; cpid=$(pgrep -f 'claude --dangerously-skip-permissions' 2>/dev/null | head -1)
+  [ -n "$cpid" ] || return 0
+  # claude(cpid) の子孫を BFS で集める（claude 本体は含めない）。
+  local descendants="" frontier="$cpid" next p child
+  while [ -n "$frontier" ]; do
+    next=""
+    for p in $frontier; do
+      for child in $(pgrep -P "$p" 2>/dev/null); do
+        descendants="$descendants $child"; next="$next $child"
+      done
+    done
+    frontier="$next"
+  done
+  descendants="${descendants# }"
+  [ -n "$descendants" ] || return 0
+  log info "reap: claude(pid=$cpid) の残存子孫を刈る: $descendants"
+  kill -TERM $descendants 2>/dev/null || true
+  sleep "${REAP_GRACE:-2}"
+  kill -KILL $descendants 2>/dev/null || true
+}

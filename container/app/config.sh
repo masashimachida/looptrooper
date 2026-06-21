@@ -61,6 +61,12 @@ export VERIFY_SETUP_CMD="${VERIFY_SETUP_CMD:-}"
 #   未設定なら no-op（dind を使わない target は空でよい）。docker 知識はこの値（config/loop.yaml）だけに閉じる。
 export BETWEEN_TASKS_CMD="${BETWEEN_TASKS_CMD:-}"
 export BETWEEN_TASKS_TIMEOUT="${BETWEEN_TASKS_TIMEOUT:-120}"   # フックの時間上限（秒。ハング防止）
+# タスク境界で claude が残した子孫プロセス（dev サーバ/watcher/run_in_background の bash 等）を刈る。
+#   Escape はタスクの生成を止めるだけで子プロセスは生き残るため、timeout でキューが空（次タスクの
+#   /clear が来ない）でも境界で確実に回収する。docker 経由の残骸は BETWEEN_TASKS_CMD が拾う＝役割分担。
+#   入口は settings.json deny（nohup/setsid 禁止）で、出口はこの reaper で塞ぐ二段構え。
+export REAP_BETWEEN_TASKS="${REAP_BETWEEN_TASKS:-true}"        # 子孫刈りの有効/無効
+export REAP_GRACE="${REAP_GRACE:-2}"                          # TERM→KILL の猶予（秒）
 # verify-runner が1コマンドに掛ける時間上限（秒）。サービス未起動の DB を上限なしで待つ
 # 等の事故でループ全体が何分も溶けるのを防ぐ天井。超過は FAIL(TIMEOUT) 扱い＝呼び出し元が
 # 「環境が要る」と気づけるようにする（タスク全体のチェックポイント TASK_TIMEOUT より十分小さく）。

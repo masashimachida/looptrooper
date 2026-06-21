@@ -39,6 +39,8 @@
       "Bash(gh pr merge:*)",
       "Bash(rm -rf:*)",
       "Bash(sudo:*)",
+      "Bash(nohup:*)",
+      "Bash(setsid:*)",
       "Read(./.env)",
       "Read(./.env.*)",
       "Read(./**/secrets/**)",

@@ -223,4 +223,5 @@ while true; do
   if [ -z "${task:-}" ]; then sleep "$POLL_INTERVAL"; continue; fi  # 仕事ゼロ＝無課金
   process_one "${task%.md}"
   run_between_tasks   # 設定された後始末フックを境界で必ず実行（成否/timeout/crash 問わず。中身は config 側）
+  reap_task_procs     # claude が残した子孫プロセス（dev サーバ等）を境界で刈る（timeout で居座るのを断つ）
 done
