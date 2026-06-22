@@ -89,16 +89,34 @@ issue を書く前に**実コードを読む**。
 ドラフト全文を見せ、**明示的な OK をもらってから**起票する。
 **勝手に立てない。**
 
-### 5. 起票する
-承認後に `gh` で起票する。
+### 5. 起票する（順序が重要＝作成 → 依存配線 → ラベルの順）
+分割した依存付き issue では、この順を厳守してレースを防ぐ。
+ラベルを最後に付ければ poll-gh が拾う時点で依存が揃っているので、待ちは要らない（依存配線前に拾われて未ブロックのまま着手する事故を防ぐ）。
+単独 issue（依存なし）は 5a と 5c をまとめて `--label` 付き作成1回でよい。
+
+5a. **issue を作成**（依存があるならまだ `loop` ラベルを付けない）:
 ```bash
-gh issue create -R "<owner>/<repo>" --label loop \
+gh issue create -R "<owner>/<repo>" \
   --title "<title>" --body "<body>"
 ```
 - repo はローカル checkout の origin から導出する（`gh repo view --json nameWithOwner -q .nameWithOwner` など）。
-- 既定は `--label loop`（実装から PR まで自走）。
-  人間がもう一段ゲートを置きたいときは `--label loop:proposed`（人間が後で `loop` を付けて承認したら着手）。
-- 分割した依存付き issue は、起票後に "blocked by" を設定する（GitHub UI、または `gh api` の `repos/{owner}/{repo}/issues/{n}/dependencies/blocked_by`）。
+- 作成した issue 番号を控える。
+
+5b. **依存を配線**（順序があるとき）— GitHub ネイティブの issue dependencies（"blocked by"）で:
+```bash
+# B が A の完了に依存する場合（A を B の blocked_by に追加）
+gh api -X POST repos/<owner>/<repo>/issues/<B>/dependencies/blocked_by -F issue_id=<A の数値 id>
+```
+- `issue_id` は REST の数値 issue id（`gh api repos/<owner>/<repo>/issues/<N> --jq .id`）。issue 番号(#N)とは別物。
+- 並行可能な issue には依存を張らない（過剰な直列化はしない）。
+
+5c. **最後に `loop` ラベルを付ける**（全 issue の作成と依存配線が済んでから）:
+```bash
+gh issue edit <N> -R "<owner>/<repo>" --add-label loop
+```
+- 既定は `loop`（実装から PR まで自走）。
+  人間がもう一段ゲートを置きたいときは `loop:proposed`（人間が後で `loop` を付けて承認したら着手）。
+- 最初から長いと分かっている issue には `loop:long` も付けてよい。
 - 出力された issue URL を人間に返す。
 
 ## やってはいけない
