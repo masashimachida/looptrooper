@@ -1,7 +1,8 @@
 # 用語集
 
-LoopTrooper 特有の用語（コンポーネント名・役割名）。**使い方は [README](../README.md)**、**設計は [architecture.md](./architecture.md) / [mechanism.md](./mechanism.md)** を参照。
-一般的な CS / git / Docker / tmux の語彙はそのまま使う。
+LoopTrooper 特有の用語（コンポーネント名と役割名）をまとめる。
+使い方は [README](../README.md) を、設計は [architecture.md](./architecture.md) と [mechanism.md](./mechanism.md) を参照。
+一般的な CS、git、Docker、tmux の語彙はそのまま使う。
 
 | 用語 | 意味 |
 |---|---|
