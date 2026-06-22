@@ -145,7 +145,6 @@ export CLEAR_RETRIES="${CLEAR_RETRIES:-2}"     # /clear が着地（文脈クリ
 export STUCK_RECHECK="${STUCK_RECHECK:-2}"    # classify_stuck の 2 回キャプチャ間隔
 export KEEPER_INTERVAL="${KEEPER_INTERVAL:-15}" # セッション生存チェック間隔
 export POLL_GH_INTERVAL="${POLL_GH_INTERVAL:-900}" # issue ポーリング間隔秒（LLM を呼ばない＝安い。既定15分）
-export ISSUE_SETTLE_SECS="${ISSUE_SETTLE_SECS:-180}" # 新規 issue の猶予秒。作成直後（依存登録などの配線が未完）の issue は1周見送る＝「作成→ポーリング→依存登録」のレースで未ブロック着手するのを防ぐ
 
 # ── ポーラー capability の有効/無効（全トリガ opt-in）──────────
 #   **本体の既定は全て false ＝何もしない素の箱**。トリガは「足し込む capability」で、
