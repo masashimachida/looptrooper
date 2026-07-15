@@ -332,6 +332,35 @@ clear_context() {
 #   狙い: verify で box が上げた stack（worktree 名=compose プロジェクト名ごとの固有イメージ~2GB＋
 #   postgres/匿名ボリューム）が、agent の crash/timeout で後始末されず累積するのを、box が境界で保証して断つ。
 #   未設定なら no-op（dind を使わない target では何もしない）。**タスク間でのみ呼ぶこと**（実行中の検証 stack を消さない）。
+# 中断タスクの残骸 worktree/ブランチを掃除する（再キュー前提）。
+#   crash/timeout で中断したタスクは worktree（`loop/<id>` ブランチ）を後始末せず
+#   残す。同一 id で再キューすると loop-task の `git worktree add -b loop/<id>` が
+#   「branch already exists」で決定的に失敗し、LLM が復旧にもがいて時間を溶かし
+#   →また殺される無限クラッシュループに陥る（実際に踏んだ）。再着手は新しい素の
+#   worktree でやり直す設計なので、残骸はここで確実に消す＝LLM の対処運に依存せず
+#   構造で断つ（番人は素の bash）。worktree dir は claude が任意に選ぶので、
+#   ブランチ名 `loop/<id>` から逆引きして除去する。
+clean_stale_worktree() {
+  local id="$1" repo="${TARGET_REPO_DIR:-/work/repo}" branch="loop/$id" wt
+  [ -d "$repo/.git" ] || return 0
+  command -v git >/dev/null 2>&1 || return 0
+  # ブランチ `loop/<id>` を checkout している worktree を逆引き
+  wt=$(git -C "$repo" worktree list --porcelain 2>/dev/null \
+        | awk -v b="refs/heads/$branch" '
+            /^worktree /{w=substr($0,10)} /^branch /{if($2==b) print w}')
+  if [ -n "$wt" ]; then
+    git -C "$repo" worktree remove --force "$wt" 2>/dev/null \
+      && log recover "stale worktree 除去: $wt ($branch)" \
+      || log warn "stale worktree 除去に失敗: $wt ($branch)"
+  fi
+  git -C "$repo" worktree prune 2>/dev/null
+  if git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
+    git -C "$repo" branch -D "$branch" 2>/dev/null \
+      && log recover "stale ブランチ削除: $branch" \
+      || log warn "stale ブランチ削除に失敗: $branch"
+  fi
+}
+
 run_between_tasks() {
   [ -n "${BETWEEN_TASKS_CMD:-}" ] || return 0
   log info "between-tasks cleanup フックを実行"

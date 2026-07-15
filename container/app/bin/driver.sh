@@ -19,6 +19,9 @@ recover_inflight() {
     id=$(basename "$f" .inprogress)
     log recover "interrupted task requeued: $id"
     rm -f "$f" "$RESULTS_DIR/$id.json"
+    # 中断時に残った worktree/`loop/<id>` ブランチを掃除（同一 id 再キュー時の
+    # branch 衝突＝無限クラッシュループを断つ。再着手は素の worktree でやり直す）。
+    clean_stale_worktree "$id"
   done
 }
 
@@ -100,10 +103,12 @@ route_result() {
         notify "✅ レビュー待ちの PR ができました${title:+: $title}: ${pr:-<URLなし>} ($id)${iurl:+ | issue: $iurl}"
         log done "$id -> $pr"
       fi
+      clean_stale_worktree "$id"   # PR は remote に push 済み＝ローカル worktree/ブランチ残骸を掃除（リーク防止）
       mv "$QUEUE_DIR/$id.md" "$PROCESSED_DIR/" 2>/dev/null || true
       ;;
     skipped)
       log skip "nothing to do: $id${iurl:+ ($iurl)}"   # 空振り。通知せずログのみ（安く静かに保つ）
+      clean_stale_worktree "$id"
       mv "$QUEUE_DIR/$id.md" "$PROCESSED_DIR/" 2>/dev/null || true
       ;;
     needs_info)
@@ -134,11 +139,13 @@ route_result() {
     failed|blocked)
       notify "⚠️ 要対応 [$status]${title:+: $title}: $id${iurl:+ | issue: $iurl}"
       comment_outcome "$id" "$status" "$issue"   # 結末を issue に残す（分離環境でも読める）
+      clean_stale_worktree "$id"   # 終端（人間トリアージへ）＝残骸を掃除。redo 時は新しい worktree でやり直す設計
       mv "$QUEUE_DIR/$id.md" "$BLOCKED_DIR/" 2>/dev/null || true
       ;;
     *)
       notify "⚠️ result が壊れている/欠落${title:+: $title}: $id（要レビュー扱い）${iurl:+ | issue: $iurl}"
       comment_outcome "$id" "needs-review" "$issue" "result が壊れている/欠落（loop-report が正常に書けていない可能性）。"
+      clean_stale_worktree "$id"
       mv "$QUEUE_DIR/$id.md" "$BLOCKED_DIR/" 2>/dev/null || true
       ;;
   esac

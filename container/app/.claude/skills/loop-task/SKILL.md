@@ -57,9 +57,16 @@ description: ループのドライバから注入された1件のタスクを、
    - **作業ブランチは PR の向き先（base）から切る** — base は `$PR_BASE_BRANCH`（未設定なら `main`）。最新を取得してそこから分岐する:
      ```bash
      git fetch origin "${PR_BASE_BRANCH:-main}"
+     # 中断・再キューの残骸で `loop/<id>` が既存だと add が「already exists」で失敗し、
+     # 復旧にもがいて時間を溶かす。再着手は素の worktree でやり直す設計なので、
+     # 既存なら無条件に除去してから作り直す（冪等化）。
+     git worktree remove --force <dir> 2>/dev/null || true
+     git worktree prune 2>/dev/null || true
+     git branch -D loop/<id> 2>/dev/null || true
      git worktree add <dir> -b loop/<id> "origin/${PR_BASE_BRANCH:-main}"
      ```
      （base を main 以外にする運用があるため。base から切らないと PR 差分に base↔main の差が混ざる。）
+     - **`already exists`／`already checked out` に遭遇したら復旧にもがかない** — 上記の `remove --force`＋`branch -D`＋`prune` で残骸を消してから add し直す。`git merge --abort` 等での延々の復旧試行は禁止（規定時間を溶かす主因）。
    - **base ブランチへは絶対に直接コミット/プッシュしない。** push は `loop/<id>` のみ。
 
 4. **実装（Fixer）** — タスク内容を実装。変更は**最小・1タスク1目的**（PR を小さく保ち、レビュー可能性を維持＝comprehension debt を抑える）。
