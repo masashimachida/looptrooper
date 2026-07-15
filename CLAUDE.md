@@ -91,14 +91,16 @@ trigger（poll-gh=issue / poll-pr=PRレビュー指摘） → enqueue.sh → .lo
 - **ループのメモリ（タスクを跨ぐ学習）**: `.loop/memory/`（`MEMORY.md` 索引 ＋ `conventions.md`/`review-prefs.md`/`pitfalls.md`/`outcomes.md`）。
   loop-task が**開始時に読み**（既知の規約・レビュー嗜好・失敗を踏まえて実装）、**終了時に“次に効く”学びだけ書き戻す**。対象 repo の外（PR に混入しない）・バインドマウントで永続。
   狙いは「毎回まっさらな1回プロンプト」からの脱却（＝経験を蓄積して賢くする）。特に PR レビュー指摘を `review-prefs.md` に溜めて新規実装で先回りさせる。setup-target が冪等 seed。
-- **PR レビュー往復（changes-requested → 修正）**: `poll-pr.sh` が `loop/*` の open PR を見て、**人間（`user.type=="User"`）の最新 changes-requested レビュー** id を検出。
+- **PR レビュー往復（changes-requested → 修正）**: `poll-pr.sh` が `loop/*` の open PR を見て、**信頼できる人間（`user.type=="User"` かつ `author_association` が `TRUSTED_ASSOCIATIONS`＝既定 OWNER/MEMBER/COLLABORATOR）の最新 changes-requested レビュー** id を検出。
+  公開 repo では誰でもレビューできるため、招待済みの人間に限定する（第三者のレビュー本文を指示として実行しない）。
   `state/pr-<N>.review` に未記録なら `LOOP_SOURCE=pr-review` で修正タスクを投函（本文に `pr_number`/`pr_branch`）→ SKILL の「PR レビュー指摘対応モード」が**既存ブランチに push して PR 更新**（新規 PR は作らない）。
   対応済みレビュー id を記録するので同じ指摘では再発火せず、人間が**新しい** changes-requested を出すと再発火する。App により author で判定＝隠しマーカー不要。
 - **依存関係（順序制御）**: GitHub ネイティブの issue dependencies（"blocked by"）を `poll-gh.sh` が REST（`dependencies/blocked_by`）で参照。
   ブロック元が未完了（open、または closed でも `not_planned`）なら enqueue せず `.seen` も立てない＝次 poll で再評価。
   ブロック開始時に `.blocked` を立てて1回だけ ⛔ 通知し、解消したら消す。独自規約ではなく GitHub 標準の関係を使う。
 - **needs_info の往復**: bot が曖昧と判断 → issue にコメント（末尾に隠しマーカー `<!-- loop:awaiting-reply -->`）→ driver が `.awaiting` を立てる
-  → `poll-gh.sh` は最新コメントがマーカーのままなら待機継続、人間が返信したら `.awaiting` を消して再投入。
+  → `poll-gh.sh` は**最後のマーカーコメントより後に信頼できる author（`author_association` が `TRUSTED_ASSOCIATIONS`＝既定 OWNER/MEMBER/COLLABORATOR）の返信**が付いたら `.awaiting` を消して再投入。
+  第三者や別 bot のコメントは再投入もブロックもしない＝無視（公開 repo で第三者が bot を駆動できないように）。
   判定はコメント本文の隠しマーカーで行う（マーカー文字列は `poll-gh.sh` と `SKILL.md` で一致必須）。
   ※当初は bot と人間が同一 PAT で投稿し author で区別できなかったための方式。**GitHub App 運用では bot は別 author（`…[bot]`）になるため author 判定に置換可能**だが、マーカー撤去は未実施（PR レビュー往復の実装とあわせて行う予定）。
 

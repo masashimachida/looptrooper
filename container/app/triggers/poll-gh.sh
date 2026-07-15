@@ -59,7 +59,7 @@ done
 #     awaiting/seen 判定は両モード共通（議論の往復も needs_info と同じ配管を再利用）。
 triage_issue() {
   local row="$1" mode="$2"
-  local num title labels seen awaiting fromplan blocked long_line unmet last
+  local num title labels seen awaiting fromplan blocked long_line unmet replied
   num=$(jq -r '.number' <<<"$row")
   title=$(jq -r '.title' <<<"$row")
   labels=$(jq -r '[.labels[].name] | join(",")' <<<"$row")   # loop:long / loop:plan 等の判定に使う
@@ -82,10 +82,20 @@ triage_issue() {
 
   # ── awaiting / seen 判定（両モード共通） ──────────────────────
   if [ -f "$awaiting" ]; then
-    # 回答待ち。最新コメントが bot の質問/プラン応答マーカーのままなら、まだ未回答＝待機継続。
-    last=$(gh issue view "$num" -R "$target_slug" --json comments \
-           -q '.comments[-1].body // ""' 2>/dev/null || echo "")
-    case "$last" in *"$AWAIT_MARKER"*) return;; esac   # bot が最新＝未回答
+    # 回答待ち。bot の質問/プラン応答（最後のマーカーコメント）より**後**に、信頼できる
+    # author（TRUSTED_ASSOCIATIONS＝リポジトリに招待された人間）の返信が付いたときだけ再投入する。
+    # 第三者や別 bot（dependabot 等）のコメントは「再投入もしない・待機の邪魔もしない」＝無視。
+    # 公開 repo では誰でもコメントできるため、「最新コメントがマーカー以外なら回答」では
+    # 第三者が bot を再駆動でき、その内容が要件として混入してしまう。
+    # 取得失敗（ネットワーク等）は 0 扱い＝待機継続（fail-closed）。
+    replied=$(gh issue view "$num" -R "$target_slug" --json comments 2>/dev/null \
+      | jq -r --arg m "$AWAIT_MARKER" --argjson t "$(trusted_assoc_jq)" '
+          .comments
+          | ((map((.body // "") | contains($m)) | rindex(true)) // -1) as $i
+          | .[$i+1:]
+          | map(select((.authorAssociation // "") as $a | $t | index($a)))
+          | length' 2>/dev/null || echo 0)
+    [ "${replied:-0}" -gt 0 ] || return                # 信頼できる返信なし＝待機継続
     rm -f "$awaiting"                                  # 人間が返信した → 再投入へ
     purge_awaiting "$num"                              # 再投函済みの残骸 md を刈る
   elif [ -f "$seen" ]; then

@@ -27,11 +27,16 @@ gh pr list -R "$slug" --state open --json number,headRefName,url --limit 50 2>/d
     url=$(jq -r '.url' <<<"$row")
     case "$branch" in loop/*) ;; *) continue;; esac     # ループが作った PR のみ対象
 
-    # 人間(user.type==User)の最新 changes-requested レビュー id を取る。
+    # 人間かつ信頼できる author（TRUSTED_ASSOCIATIONS＝リポジトリに招待された人間）の
+    # 最新 changes-requested レビュー id を取る。
     #   ※bot 自身のレビューは無いが、type 判定なら App の login 表記揺れにも影響されない。
-    rid=$(gh api "repos/$slug/pulls/$num/reviews" \
-          --jq '[.[] | select(.state=="CHANGES_REQUESTED" and .user.type=="User")]
-                | sort_by(.submitted_at) | last | .id // empty' 2>/dev/null || true)
+    #   ※type だけだと「人間なら誰でも」＝公開 repo では第三者のレビュー本文を指示として
+    #     実行してしまうため、author_association で招待済みの人間に限定する。
+    rid=$(gh api "repos/$slug/pulls/$num/reviews" 2>/dev/null \
+          | jq -r --argjson t "$(trusted_assoc_jq)" '
+              [.[] | select(.state=="CHANGES_REQUESTED" and .user.type=="User"
+                            and ((.author_association // "") as $a | $t | index($a)))]
+              | sort_by(.submitted_at) | last | .id // empty' 2>/dev/null || true)
     [ -n "$rid" ] || continue                            # 人間の changes-requested 無し
 
     marker="$STATE_DIR/pr-$num.review"

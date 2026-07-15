@@ -48,6 +48,15 @@ export GITHUB_APP_INSTALLATION_ID="${GITHUB_APP_INSTALLATION_ID:-}"     # 任意
 #     原理的に隠せない（claude が認証に使う当の資格情報だから）。短命化できる App モード推奨。
 export LOOP_SECRET_VARS="GITHUB_APP_PRIVATE_KEY_B64 GITHUB_APP_PRIVATE_KEY_FILE GH_TOKEN SLACK_WEBHOOK_URL NOTIFY_CMD"
 
+# ── 外部入力（issue コメント / PR レビュー）を「人間の指示」と認める author の範囲 ──
+#   GitHub の author_association がこのいずれかのコメント/レビューだけに反応する
+#   （poll-gh の awaiting 解除・poll-pr の changes-requested 検知）。公開 repo では誰でも
+#   コメント/レビューできるため、無条件に従うと第三者が bot を駆動できてしまう。
+#   OWNER/COLLABORATOR = リポジトリ所有者・招待された人間、MEMBER = org メンバー。
+#   org 運用でリポジトリ単位に締めたくなったら collaborator permission API 方式に置換する
+#   （個人リポジトリ運用では association で十分）。
+export TRUSTED_ASSOCIATIONS="${TRUSTED_ASSOCIATIONS:-OWNER MEMBER COLLABORATOR}"
+
 # ── git commit の identity（未設定だと git commit が失敗する）──
 export GIT_USER_NAME="${GIT_USER_NAME:-loop-bot}"
 export GIT_USER_EMAIL="${GIT_USER_EMAIL:-loop-bot@users.noreply.github.com}"

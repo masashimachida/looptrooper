@@ -67,6 +67,16 @@ target_slug() {
   printf '%s' "${_TARGET_SLUG:-}"
 }
 
+# TRUSTED_ASSOCIATIONS（空白区切り）を jq の配列リテラルに変換する。
+#   例: "OWNER MEMBER COLLABORATOR" → ["OWNER","MEMBER","COLLABORATOR"]
+#   poll-gh（awaiting 解除）と poll-pr（レビュー検知）が --argjson で jq に渡し、
+#   author_association がこの集合に入るコメント/レビューだけを「人間の指示」と認める。
+trusted_assoc_jq() {
+  local out="" a
+  for a in ${TRUSTED_ASSOCIATIONS:-}; do out="$out\"$a\","; done
+  printf '[%s]' "${out%,}"
+}
+
 # issue 番号 → GitHub issue URL（slug か番号が無ければ空文字）。
 issue_url() {
   local n="$1" slug; slug=$(target_slug)
