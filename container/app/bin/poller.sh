@@ -34,6 +34,10 @@ rm -f "$STATE_DIR"/poll-*.lastrun 2>/dev/null || true
 
 log info "poller started (tick=${POLL_TICK}s, default-interval=${POLL_GH_INTERVAL}s)"
 while true; do
+  # gh トークンキャッシュの鮮度維持。claude セッションには秘密（App 鍵/GH_TOKEN）を渡さない
+  # 設計（LOOP_SECRET_VARS）のため、claude 側の gh はこのキャッシュを読むだけ。鍵を持つ poller が
+  # 毎 tick 先回りして再発行しておく（有効なうちはキャッシュヒットで即 return＝API は叩かない）。
+  ./bin/gh-token.sh >/dev/null 2>&1 || true
   run_poll GH      ./triggers/poll-gh.sh      gh
   run_poll PR      ./triggers/poll-pr.sh      pr
   run_poll OUTCOME ./triggers/poll-outcome.sh outcome

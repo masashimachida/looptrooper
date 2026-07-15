@@ -52,8 +52,17 @@ launch_claude() {
 ensure_session() {
   if ! tmux has-session -t "$TMUX_SESSION" 2>/dev/null; then
     log keeper "creating tmux session + claude in $TARGET_REPO_DIR"
-    tmux new-session -d -s "$TMUX_SESSION" -c "$TARGET_REPO_DIR" 2>/dev/null \
-      || tmux new-session -d -s "$TMUX_SESSION"
+    # 秘密（App 鍵 / GH_TOKEN / webhook = LOOP_SECRET_VARS）を claude に継承させない。
+    #   tmux サーバはこの new-session で初めて起動する（サーバは最後のセッションと共に死ぬ）ので、
+    #   ここで環境から抜けば pane（claude と全サブプロセス）には渡らない。keeper 自身の env は
+    #   触らない＝notify(Slack) は従来どおり。claude の gh はトークンキャッシュ経由で動く
+    #   （鮮度は poller が毎 tick gh-token.sh を叩いて維持）。
+    local scrub=() v
+    for v in ${LOOP_SECRET_VARS:-}; do scrub+=(-u "$v"); done
+    env "${scrub[@]}" tmux new-session -d -s "$TMUX_SESSION" -c "$TARGET_REPO_DIR" 2>/dev/null \
+      || env "${scrub[@]}" tmux new-session -d -s "$TMUX_SESSION"
+    # 保険: 万一サーバが既存だった場合に備え、グローバル環境からも抜く（以後の pane に効く）。
+    for v in ${LOOP_SECRET_VARS:-}; do tmux set-environment -g -u "$v" 2>/dev/null || true; done
     # 生ストリームを追記ログ化（forensics 専用。scrollback truncation なし）
     tmux pipe-pane -t "$TMUX_SESSION" -o "cat >> '$LOGS_DIR/session.log'"
     sleep 1

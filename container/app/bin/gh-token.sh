@@ -18,7 +18,9 @@ source ./config.sh
 
 CACHE="$LOOP_DIR/.loop/.gh-token"          # "<exp_epoch> <token>"（mode 600）
 INST_CACHE="$LOOP_DIR/.loop/.gh-installation-id"
-BUFFER=60                                   # 失効この秒数前に再発行
+BUFFER=300                                  # 失効この秒数前に再発行。claude セッションは秘密を持たず
+                                            # （LOOP_SECRET_VARS）キャッシュを実失効まで読むだけなので、
+                                            # poller（毎 tick=60s）が必ずこの窓内で先回りできる幅を取る。
 
 err() { printf '%s\n' "gh-token: $*" >&2; }
 
@@ -90,7 +92,18 @@ if [ -n "${GITHUB_APP_ID:-}" ] && { [ -n "${GITHUB_APP_PRIVATE_KEY_FILE:-}" ] ||
   resp=$(api -X POST "https://api.github.com/app/installations/$inst/access_tokens")
   tok=$(jq -r '.token // empty' <<<"$resp")
   exp_iso=$(jq -r '.expires_at // empty' <<<"$resp")
-  [ -n "$tok" ] || { err "installation token を取得できません: $(jq -r '.message // .' <<<"$resp" 2>/dev/null)"; exit 1; }
+  if [ -z "$tok" ]; then
+    err "installation token を取得できません: $(jq -r '.message // .' <<<"$resp" 2>/dev/null)"
+    # 再発行に失敗（ネットワーク断等）でも、キャッシュが実失効前なら代用して凌ぐ。
+    if [ -f "$CACHE" ]; then
+      read -r c_exp c_tok < "$CACHE" || true
+      if [ -n "${c_tok:-}" ] && [ "$(date +%s)" -lt "${c_exp:-0}" ]; then
+        err "再発行失敗のためキャッシュのトークンで代用します"
+        emit "$c_tok"; exit 0
+      fi
+    fi
+    exit 1
+  fi
 
   exp_epoch=$(date -d "$exp_iso" +%s 2>/dev/null || echo $(( $(date +%s) + 3000 )))
   ( umask 177; printf '%s %s\n' "$exp_epoch" "$tok" > "$CACHE" )   # mode 600 で保存
@@ -99,8 +112,23 @@ fi
 
 # ── 静的トークンモード（PAT / machine user）────────────────
 if [ -n "${GH_TOKEN:-}" ]; then
+  # キャッシュにも書く: claude セッションは秘密を持たない（LOOP_SECRET_VARS で scrub）ので、
+  # 鍵/PAT を持つ側（poller が毎 tick 呼ぶ）が温めたこのキャッシュを下のフォールバックで読む。
+  # exp は形式上1時間先（poller が毎 tick 書き直すので常に先へ転がる）。
+  ( umask 177; printf '%s %s\n' "$(( $(date +%s) + 3600 ))" "$GH_TOKEN" > "$CACHE" )
   emit "$GH_TOKEN"; exit 0
 fi
 
-err "認証情報がありません。.env に GITHUB_APP_ID(+鍵) か GH_TOKEN を設定してください。"
+# ── キャッシュ・フォールバック（秘密を持たないプロセス用）────────────
+#   claude セッションには App 鍵も GH_TOKEN も渡さない（session-keeper が tmux 起動時に scrub）。
+#   そこから呼ばれた場合はここに落ちるので、鍵を持つ側が温めたキャッシュを実失効まで使う
+#   （バッファは見ない＝再発行は poller の仕事。通常運転で失効間際を掴むことはまず無い）。
+if [ -f "$CACHE" ]; then
+  read -r exp tok < "$CACHE" || true
+  if [ -n "${exp:-}" ] && [ -n "${tok:-}" ] && [ "$(date +%s)" -lt "$exp" ]; then
+    emit "$tok"; exit 0
+  fi
+fi
+
+err "認証情報がありません。.env に GITHUB_APP_ID(+鍵) か GH_TOKEN を設定してください（claude セッションからならキャッシュ失効＝poller の稼働を確認）。"
 exit 1
