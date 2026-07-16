@@ -23,8 +23,7 @@ record_crash() {
   fi
 }
 
-# claude が pane の前面プロセスとして生きているか（liveness 判定の単一ソース）
-claude_running() { grep -qiE '\b(claude|node)\b' <<<"$(pane_cmd)"; }
+# liveness 判定は lib.sh の claude_alive() に集約（driver の注入前確認・クラッシュ検知と同一）。
 
 launch_claude() {
   # Claude セッションは対象 repo を cwd に起動する。
@@ -44,7 +43,7 @@ launch_claude() {
   local waited=0
   while [ "$waited" -lt "$LAUNCH_GRACE" ]; do
     sleep 1; waited=$((waited+1))
-    claude_running && return 0
+    claude_alive && return 0
   done
   return 1
 }
@@ -73,7 +72,7 @@ ensure_session() {
   fi
   # 既存セッションで claude が前面にいない＝本当に落ちた。launch_claude が起動完了まで
   # 待つので、起動途中(まだ bash)を誤検知して二重投入することはない。
-  if ! claude_running; then
+  if ! claude_alive; then
     log keeper "claude not running; relaunching"
     record_crash                         # 落ちた事実を 1 回だけカウント
     launch_claude || log keeper "relaunch failed within ${LAUNCH_GRACE}s"

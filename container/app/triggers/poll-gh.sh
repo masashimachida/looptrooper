@@ -44,9 +44,16 @@ purge_awaiting() {
 #   ファイルを触らず GitHub のラベル1つ（iOS でもタップ可）で再投入できる。人間ゲートは維持。
 #   既処理マーカー(.seen/.awaiting/.blocked)を消し、loop:redo を外して loop を付け直す
 #   → 直後の本処理パスが通常どおり enqueue する（冪等: 1回で消費される）。
-gh issue list -R "$target_slug" --label "loop:redo" --state open --json number 2>/dev/null \
+gh issue list -R "$target_slug" --label "loop:redo" --state open --json number --limit "$POLL_GH_LIMIT" 2>/dev/null \
 | jq -r '.[].number' 2>/dev/null | while read -r n; do
     [ -n "$n" ] || continue
+    # 処理中/キュー内に同じ issue のタスクがあれば redo を今回は見送る（ラベルは残す＝次周回で
+    # 再評価）。ここで state を消して再 enqueue すると、進行中の分と合わせて同一 issue のタスクが
+    # 2本並行し、別ブランチ・PR が2つできてしまう（inprogress 中も md は queue に残るので queue を見る）。
+    if grep -lE "issue #$n([^0-9]|\$)" "$QUEUE_DIR"/*.md >/dev/null 2>&1; then
+      log redo "issue #$n: 処理中/キュー内のタスクがあるため redo を保留（次周回で再評価）"
+      continue
+    fi
     rm -f "$STATE_DIR/issue-$n.seen" "$STATE_DIR/issue-$n.awaiting" "$STATE_DIR/issue-$n.blocked"
     purge_awaiting "$n"
     gh issue edit "$n" -R "$target_slug" --remove-label "loop:redo" --add-label "loop" >/dev/null 2>&1 || true
@@ -160,11 +167,11 @@ EOF
 }
 
 # ── 実装モード（loop ラベル）─ 従来の主入力。曖昧でなければ実装〜PR まで自走 ──
-gh issue list -R "$target_slug" --label loop --state open --json number,title,labels 2>/dev/null \
+gh issue list -R "$target_slug" --label loop --state open --json number,title,labels --limit "$POLL_GH_LIMIT" 2>/dev/null \
 | jq -c '.[]' 2>/dev/null | while read -r row; do triage_issue "$row" implement; done
 
 # ── プランモード（loop:plan ラベル）─ コードに触れず議論。loop 無しでも拾う ──
 #   「issue を見に来て会話するが実装はしない」中間状態。実装したくなったら人間が
 #   loop:plan を外して loop に付け替える（plan2impl で昇格）。
-gh issue list -R "$target_slug" --label "loop:plan" --state open --json number,title,labels 2>/dev/null \
+gh issue list -R "$target_slug" --label "loop:plan" --state open --json number,title,labels --limit "$POLL_GH_LIMIT" 2>/dev/null \
 | jq -c '.[]' 2>/dev/null | while read -r row; do triage_issue "$row" plan; done

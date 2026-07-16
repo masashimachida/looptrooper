@@ -152,6 +152,8 @@ export STATE_BOARD="$LOOP_DIR/LOOP_STATE.md"
 export TASK_TIMEOUT="${TASK_TIMEOUT:-1200}"   # 1 タスクのチェックポイントまでの待ち秒（既定20分）。超過したら延長せず中断させ、経過/理由/方針を自己申告させる（人間トリアージへ）
 export TASK_TIMEOUT_LONG="${TASK_TIMEOUT_LONG:-3600}" # loop:long ラベルの issue 用の待ち秒（既定60分）。長時間タスクを許すが無制限ではない（超えればやはり中断・自己申告）
 export CHECKPOINT_GRACE="${CHECKPOINT_GRACE:-180}"   # 中断指示後、自己申告(loop-report --status timeout)が返るのを待つ上限秒。来なければ応答不能とみなし crashed 扱いで再キュー
+export CLAUDE_WAIT="${CLAUDE_WAIT:-60}"       # 注入前に claude 生存を待つ上限秒（keeper 立て直し待ち）。死んだ pane への注入事故を防ぐ。超過なら queue に残し次周回へ
+export CRASH_DETECT_GRACE="${CRASH_DETECT_GRACE:-10}"  # 待機中、claude がこの秒数連続で死んで（pane=bash）いたらハードクラッシュと判定し満了を待たず再キュー。keeper の poll(15s)より短く
 export TRIAGE_GRACE="${TRIAGE_GRACE:-60}"     # 着手通知の猶予秒。この間に skipped で返れば「着手」を通知しない（空振りは静かに）
 export POLL_INTERVAL="${POLL_INTERVAL:-5}"    # キュー監視間隔秒（仕事ゼロ＝この sleep だけ＝無課金）
 export CLEAR_BETWEEN_TASKS="${CLEAR_BETWEEN_TASKS:-true}"  # タスク毎に /clear して文脈累積を断つ（コスト最適化）。
@@ -164,6 +166,7 @@ export CLEAR_RETRIES="${CLEAR_RETRIES:-2}"     # /clear が着地（文脈クリ
 export STUCK_RECHECK="${STUCK_RECHECK:-2}"    # classify_stuck の 2 回キャプチャ間隔
 export KEEPER_INTERVAL="${KEEPER_INTERVAL:-15}" # セッション生存チェック間隔
 export POLL_GH_INTERVAL="${POLL_GH_INTERVAL:-900}" # issue ポーリング間隔秒（LLM を呼ばない＝安い。既定15分）
+export POLL_GH_LIMIT="${POLL_GH_LIMIT:-200}"  # gh issue list の取得上限。既定(30)だと open loop issue が30超で古い分が拾われず飢餓する（poll-spec は無制限起票するので効く）
 
 # ── ポーラー capability の有効/無効（全トリガ opt-in）──────────
 #   **本体の既定は全て false ＝何もしない素の箱**。トリガは「足し込む capability」で、

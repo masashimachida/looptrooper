@@ -151,8 +151,18 @@ route_result() {
   esac
 }
 
+# claude が停止/クラッシュしたタスクを再キューする（queue に残す＝keeper 立て直し後に再注入）。
+#   待機中のクラッシュ早期検知（wait_result_alive==2）と、満了後の classify_stuck=crashed/hung の
+#   両方から呼ぶ＝通知文言と後始末を一元化する。
+requeue_crashed() {
+  local id="$1" title="$2" iurl="$3"
+  tmux send-keys -t "$TMUX_SESSION" Escape 2>/dev/null || true
+  notify "⚠️ セッションが停止/クラッシュ${title:+: $title}: $id（keeper が再起動し再キューします）${iurl:+ | issue: $iurl}"
+  rm -f "$STATE_DIR/$id.inprogress"   # queue に残す＝次周回で再処理（keeper が claude を立て直す）
+}
+
 process_one() {
-  local id="$1" iurl issue tmo title
+  local id="$1" iurl issue tmo title wr
   issue=$(task_issue "$id")
   iurl=$(issue_url "$issue")   # 着手/タイムアウト/詰まり通知に issue URL を添える
   title=$(task_title "$id")    # 通知に issue タイトルを添える
@@ -167,6 +177,14 @@ process_one() {
   #   溶かし→また殺される無限クラッシュループに陥る（cf0099b で踏んだ経路）。ここで構造的に
   #   断つ＝LLM の対処運に依存しない。新規タスクなら対象が無く no-op。
   clean_stale_worktree "$id"
+
+  # 注入前に claude の生存を確認する（keeper が立て直すのを待つ）。死んだ pane（bash に戻った
+  # 状態）に /clear やタスク文字列を打ち込むと素の bash に流れて事故る（空振り）。上がらなければ
+  # queue に残して次周回へ（keeper の crash-loop ブレーカに委ねる＝driver は無限ループしない）。
+  if ! wait_claude_alive "$CLAUDE_WAIT"; then
+    log warn "claude 不在のまま注入猶予（${CLAUDE_WAIT}s）超過; requeue $id"
+    rm -f "$STATE_DIR/$id.inprogress"; return
+  fi
 
   # 前タスクの会話文脈を捨ててから着手（コスト最適化。知識は .loop/memory 側にあるので安全）。
   #   前タスクは既に result を出して完了済み＝締め出力は使い捨て。clear_context が**待たず
@@ -183,16 +201,17 @@ process_one() {
 
   # トリアージ猶予: この間に skipped(や即 done) で結果が来たら着手通知を出さずにルーティング。
   # 空振りに 🚀 を飛ばさない＝「skip しなかった時だけ着手通知」を満たす。
-  if wait_result "$id" "$TRIAGE_GRACE"; then
-    rm -f "$STATE_DIR/$id.inprogress"; route_result "$id"; return
-  fi
+  # wait_result_alive は結果=0 / 猶予切れ=1 / クラッシュ早期検知=2 を返す。
+  wait_result_alive "$id" "$TRIAGE_GRACE"; wr=$?
+  [ "$wr" = 0 ] && { rm -f "$STATE_DIR/$id.inprogress"; route_result "$id"; return; }
+  [ "$wr" = 2 ] && { requeue_crashed "$id" "$title" "$iurl"; return; }
 
   # 猶予を超えてまだ処理中＝実作業中。ここで初めて着手を通知する。
   notify "🚀 タスク着手${title:+: $title}: $id${iurl:+ | issue: $iurl}"
 
-  if wait_result "$id" "$(( tmo > TRIAGE_GRACE ? tmo - TRIAGE_GRACE : tmo ))"; then
-    rm -f "$STATE_DIR/$id.inprogress"; route_result "$id"; return
-  fi
+  wait_result_alive "$id" "$(( tmo > TRIAGE_GRACE ? tmo - TRIAGE_GRACE : tmo ))"; wr=$?
+  [ "$wr" = 0 ] && { rm -f "$STATE_DIR/$id.inprogress"; route_result "$id"; return; }
+  [ "$wr" = 2 ] && { requeue_crashed "$id" "$title" "$iurl"; return; }
 
   # チェックポイント ── 規定時間を超過。詰まりを分類して扱いを変える。
   # 「10分(既定20分)で終わらないものは大抵終わらない」経験則に基づき、working でも
@@ -224,9 +243,7 @@ process_one() {
       notify "⚠️ 中断報告も無応答${title:+: $title}: $id（応答不能とみなし再キュー）${iurl:+ | issue: $iurl}"
       ;;
     crashed|hung)
-      tmux send-keys -t "$TMUX_SESSION" Escape 2>/dev/null || true
-      notify "⚠️ セッションが停止/クラッシュ${title:+: $title}: $id（keeper が再起動し再キューします）${iurl:+ | issue: $iurl}"
-      # タスクは queue に残す＝再処理。keeper が claude を立て直す。
+      requeue_crashed "$id" "$title" "$iurl"   # queue に残す＝再処理。keeper が claude を立て直す。
       ;;
   esac
   rm -f "$STATE_DIR/$id.inprogress"

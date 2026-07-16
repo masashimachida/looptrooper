@@ -202,6 +202,11 @@ task_timeout() {
 pane_text() { tmux capture-pane -p -t "$TMUX_SESSION" 2>/dev/null; }
 pane_cmd()  { tmux display -p -t "$TMUX_SESSION" '#{pane_current_command}' 2>/dev/null; }
 
+# claude が pane の前面プロセスとして生きているか（liveness 判定の単一ソース）。
+#   pane の前面コマンドが claude/node なら生存。crash すると pane は素の bash に戻る。
+#   session-keeper（立て直し）と driver（注入前確認・待機中のクラッシュ検知）が共有する。
+claude_alive() { pane_cmd | grep -qiE '\b(claude|node)\b'; }
+
 # Claude がアイドル（入力待ち）か。注入前の belt-and-suspenders。
 is_idle() {
   local a b
@@ -229,6 +234,38 @@ wait_result() {
   while [ ! -f "$RESULTS_DIR/$id.json" ]; do
     sleep 2; waited=$((waited+2))
     [ "$waited" -ge "$timeout" ] && return 1
+  done
+  return 0
+}
+
+# claude が生きるまで最大 timeout 秒待つ（keeper が立て直すのを待つ）。生存で 0、超過で 1。
+#   注入前に呼ぶ: 死んだ pane（bash に戻った状態）に /clear やタスク文字列を打ち込むと素の bash に
+#   流れて事故る（空振り）。keeper（poll 15s＋起動待ち）が立て直す猶予を見て待つ。
+wait_claude_alive() {
+  local timeout="${1:-60}" waited=0
+  while ! claude_alive; do
+    [ "$waited" -ge "$timeout" ] && return 1
+    sleep 2; waited=$((waited+2))
+  done
+  return 0
+}
+
+# result file の出現を待つ。timeout で 1。さらに claude が grace 秒 連続で死んでいたら 2 を返す。
+#   素の wait_result はファイル出現だけを見るので、claude が序盤でハードクラッシュしても満了
+#   （最大 TASK_TIMEOUT）まで待ってしまう＝長いデッドタイム。keeper は別途立て直すが新 claude は
+#   タスクを再注入されない＝result は永遠に来ない。そこで pane が素の bash に戻った状態
+#   （working な claude では起きない＝誤検知しない）を早期に検知し、呼び出し元に再キューさせる。
+#   grace は keeper の立て直し(poll 15s)より短めにして、立て直し前に畳めるようにする。
+#   ※立て直し済みで idle に戻った曖昧ケース（pane=node だが作業していない）は検知せず、従来どおり
+#     満了→classify_stuck(hung)→再キューに委ねる（誤検知を避けるため踏み込まない）。
+wait_result_alive() {
+  local id="$1" timeout="$2" waited=0 dead=0 grace="${CRASH_DETECT_GRACE:-10}"
+  while [ ! -f "$RESULTS_DIR/$id.json" ]; do
+    sleep 2; waited=$((waited+2))
+    [ "$waited" -ge "$timeout" ] && return 1
+    if claude_alive; then dead=0; else
+      dead=$((dead+2)); [ "$dead" -ge "$grace" ] && return 2
+    fi
   done
   return 0
 }
