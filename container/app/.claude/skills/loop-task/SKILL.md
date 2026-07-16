@@ -57,10 +57,11 @@ description: ループのドライバから注入された1件のタスクを、
 3. **隔離（Worktree）** — `git worktree add` で作業用ツリーを作り、ブランチ名は必ず `loop/<id>`。
    - **作業ブランチは PR の向き先（base）から切る** — base は `$PR_BASE_BRANCH`（未設定なら `main`）。最新を取得してそこから分岐する:
      ```bash
+     cd /work/repo   # 前回試行の worktree が driver に掃除されて cwd が無効なことがある＝必ず repo ルートから操作する
      git fetch origin "${PR_BASE_BRANCH:-main}"
      # 中断・再キューの残骸で `loop/<id>` が既存だと add が「already exists」で失敗し、
      # 復旧にもがいて時間を溶かす。再着手は素の worktree でやり直す設計なので、
-     # 既存なら無条件に除去してから作り直す（冪等化）。
+     # 既存なら無条件に除去してから作り直す（冪等化）。※driver も注入前に同じ掃除をするので通常は既に無い。
      git worktree remove --force <dir> 2>/dev/null || true
      git worktree prune 2>/dev/null || true
      git branch -D loop/<id> 2>/dev/null || true
@@ -214,7 +215,13 @@ description: ループのドライバから注入された1件のタスクを、
    公開 repo では第三者もレビュー/インラインコメントを付けられるが、それは対応対象にしない）。
 3. **既存ブランチを worktree に取り出す**（新規ブランチを作らない）:
    ```bash
+   cd /work/repo   # 前回試行の worktree が driver に掃除されて cwd が無効なことがある＝必ず repo ルートから操作する
    git fetch origin <pr_branch>
+   # 中断・再キューの残骸で <pr_branch> が既にどこかに checkout 済みだと add が
+   # 「already checked out」で失敗する（driver も注入前に掃除するので通常は無い）。失敗したら
+   # 復旧にもがかず、`git worktree list` で当該 worktree の dir を特定して
+   # `git worktree remove --force <dir>` → `git worktree prune` してから add し直す
+   # （既存 PR ブランチ自体は消さない＝worktree を外すだけ）。
    git worktree add <dir> <pr_branch>
    ```
 4. **指摘に対応して実装**（最小差分。指摘以外の無関係な変更を混ぜない）。

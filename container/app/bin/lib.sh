@@ -94,6 +94,17 @@ task_issue() {
   done
 }
 
+# タスクファイルから行頭 "key: value" 形式の値を1つ拾う（標準ディレクトリを順に探す）。無ければ空。
+#   用途: PR レビュー往復タスクが本文に書く pr_branch（掃除対象ブランチの逆引きに使う）。
+task_field() {
+  local id="$1" key="$2" f
+  for f in "$QUEUE_DIR/$id.md" "$AWAITING_DIR/$id.md" "$PROCESSED_DIR/$id.md" "$BLOCKED_DIR/$id.md"; do
+    [ -f "$f" ] || continue
+    grep -oE "^${key}:[[:space:]]*[^[:space:]]+" "$f" | head -1 | sed -E "s/^${key}:[[:space:]]*//"
+    return
+  done
+}
+
 # 間隔指定("30m"/"2h"/"90s"/"45"=分) を秒に変換。不正なら 1 を返す。
 to_seconds() {
   local v="$1" n u
@@ -349,25 +360,36 @@ clear_context() {
 #   →また殺される無限クラッシュループに陥る（実際に踏んだ）。再着手は新しい素の
 #   worktree でやり直す設計なので、残骸はここで確実に消す＝LLM の対処運に依存せず
 #   構造で断つ（番人は素の bash）。worktree dir は claude が任意に選ぶので、
-#   ブランチ名 `loop/<id>` から逆引きして除去する。
+#   ブランチ名から逆引きして除去する。
+#   掃除対象ブランチ:
+#     - 通常タスク  : `loop/<id>`（`worktree add -b` で新規作成）
+#     - PR レビュー : 本文の `pr_branch`（既存 `loop/<元id>` を checkout）。id から逆引き
+#       できないので task から拾う。「already checked out」で同じ無限ループになるため。
 clean_stale_worktree() {
-  local id="$1" repo="${TARGET_REPO_DIR:-/work/repo}" branch="loop/$id" wt
+  local id="$1" repo="${TARGET_REPO_DIR:-/work/repo}" b wt prb branches
   [ -d "$repo/.git" ] || return 0
   command -v git >/dev/null 2>&1 || return 0
-  # ブランチ `loop/<id>` を checkout している worktree を逆引き
-  wt=$(git -C "$repo" worktree list --porcelain 2>/dev/null \
-        | awk -v b="refs/heads/$branch" '
-            /^worktree /{w=substr($0,10)} /^branch /{if($2==b) print w}')
-  if [ -n "$wt" ]; then
-    git -C "$repo" worktree remove --force "$wt" 2>/dev/null \
-      && log recover "stale worktree 除去: $wt ($branch)" \
-      || log warn "stale worktree 除去に失敗: $wt ($branch)"
-  fi
+  branches=("loop/$id")
+  prb=$(task_field "$id" pr_branch)
+  [ -n "$prb" ] && [ "$prb" != "loop/$id" ] && branches+=("$prb")
+  for b in "${branches[@]}"; do
+    # ブランチ b を checkout している worktree を逆引きして除去
+    wt=$(git -C "$repo" worktree list --porcelain 2>/dev/null \
+          | awk -v br="refs/heads/$b" '
+              /^worktree /{w=substr($0,10)} /^branch /{if($2==br) print w}')
+    if [ -n "$wt" ]; then
+      git -C "$repo" worktree remove --force "$wt" 2>/dev/null \
+        && log recover "stale worktree 除去: $wt ($b)" \
+        || log warn "stale worktree 除去に失敗: $wt ($b)"
+    fi
+  done
   git -C "$repo" worktree prune 2>/dev/null
-  if git -C "$repo" show-ref --verify --quiet "refs/heads/$branch"; then
-    git -C "$repo" branch -D "$branch" 2>/dev/null \
-      && log recover "stale ブランチ削除: $branch" \
-      || log warn "stale ブランチ削除に失敗: $branch"
+  # loop/<id> は per-task の使い捨てブランチ＝削除（再着手は新しい worktree でやり直す）。
+  # pr_branch は remote 追跡の既存 PR ブランチなので消さない（worktree を外せば再 add できる）。
+  if git -C "$repo" show-ref --verify --quiet "refs/heads/loop/$id"; then
+    git -C "$repo" branch -D "loop/$id" 2>/dev/null \
+      && log recover "stale ブランチ削除: loop/$id" \
+      || log warn "stale ブランチ削除に失敗: loop/$id"
   fi
 }
 

@@ -19,9 +19,8 @@ recover_inflight() {
     id=$(basename "$f" .inprogress)
     log recover "interrupted task requeued: $id"
     rm -f "$f" "$RESULTS_DIR/$id.json"
-    # 中断時に残った worktree/`loop/<id>` ブランチを掃除（同一 id 再キュー時の
-    # branch 衝突＝無限クラッシュループを断つ。再着手は素の worktree でやり直す）。
-    clean_stale_worktree "$id"
+    # worktree/ブランチ残骸の掃除は process_one が注入前に必ず行う（requeue 安全性を
+    # 1点に集約＝crash/hung/limit/中断無応答/driver 再起動の全再キュー経路をそこでカバー）。
   done
 }
 
@@ -134,6 +133,7 @@ route_result() {
       [ -n "$issue" ] && : > "$STATE_DIR/issue-$issue.awaiting"
       notify "⏸ 時間超過で中断: issue #${issue:-?}${title:+「$title」} に経過を報告しました ($id) — redo / 分割 / loop:long で再開${iurl:+ | $iurl}"
       log timeout "$id -> issue #${issue:-?} (checkpoint, awaiting human triage)"
+      clean_stale_worktree "$id"   # 中断時の worktree/ブランチ残骸を掃除（move_awaiting で md が queue を離れる前に＝task_field が pr_branch を読める）
       move_awaiting "$id" "$issue"
       ;;
     failed|blocked)
@@ -159,6 +159,14 @@ process_one() {
   tmo=$(task_timeout "$id")    # チェックポイントまでの待ち秒。loop:long なら長め（poll-gh が task に書く）
   rm -f "$RESULTS_DIR/$id.json"
   : > "$STATE_DIR/$id.inprogress"
+
+  # 注入前に前回試行の worktree/ブランチ残骸を必ず掃除する（requeue 安全性の集約点）。
+  #   同一 id が再キューされる全経路（crash/hung/limit/中断無応答/driver 再起動）で、前回
+  #   作った `loop/<id>`（PR レビューは pr_branch）が残っていると SKILL の `git worktree add`
+  #   が「already exists／already checked out」で決定的に失敗し、LLM が復旧にもがいて時間を
+  #   溶かし→また殺される無限クラッシュループに陥る（cf0099b で踏んだ経路）。ここで構造的に
+  #   断つ＝LLM の対処運に依存しない。新規タスクなら対象が無く no-op。
+  clean_stale_worktree "$id"
 
   # 前タスクの会話文脈を捨ててから着手（コスト最適化。知識は .loop/memory 側にあるので安全）。
   #   前タスクは既に result を出して完了済み＝締め出力は使い捨て。clear_context が**待たず
@@ -199,6 +207,7 @@ process_one() {
       tmux send-keys -t "$TMUX_SESSION" Escape 2>/dev/null || true
       notify "⚠️ 権限モーダルで停止${title:+: $title}: $id${iurl:+ | issue: $iurl}"
       comment_outcome "$id" "blocked" "$issue" "許可モーダルで停止（権限要求）。loop の settings 許可リスト（許可されていない操作）を確認のこと。"
+      clean_stale_worktree "$id"   # 終端（blocked）＝worktree/ブランチ残骸を掃除（md が queue を離れる前に）
       mv "$QUEUE_DIR/$id.md" "$BLOCKED_DIR/" 2>/dev/null || true
       ;;
     working)
