@@ -33,6 +33,40 @@ fi
 git -C "$TARGET_REPO_DIR" config user.name  "$GIT_USER_NAME"
 git -C "$TARGET_REPO_DIR" config user.email "$GIT_USER_EMAIL"
 
+# ── 3.5) pre-push hook: push 先を refs/heads/loop/* のみに強制（冪等・毎回上書き）──
+#   settings.json の deny は文字列前方一致なので `git push origin loop/x:main` の類を素通しする
+#   （refspec は書き方が無数）。hook は push される remote ref を stdin で受けるので、refspec の
+#   書き方によらず（loop/x:main も HEAD:main も +foo:main も）宛先だけを見て弾ける＝構造で強制する。
+#   worktree は hooks を共有する（common .git/hooks）ので loop-task の作業ツリーにも効く。
+#   限界: `git push --no-verify` は hook を飛ばす（settings.json deny で入口を塞ぐ）。hook 自体の
+#   書き換えは settings.json の Edit(.claude) 相当ではなく .git 配下なので、敵対的 claude には
+#   最終的に箱の使い捨て性が砦（＝main の実保護は各プロジェクトの branch protection で行う）。
+_hookdir=$(git -C "$TARGET_REPO_DIR" rev-parse --git-common-dir 2>/dev/null)
+case "$_hookdir" in /*) ;; *) _hookdir="$TARGET_REPO_DIR/$_hookdir";; esac   # 相対なら repo 基準で絶対化
+mkdir -p "$_hookdir/hooks"
+cat > "$_hookdir/hooks/pre-push" <<'HOOK'
+#!/usr/bin/env bash
+# LoopTrooper pre-push guard（setup-target.sh が設置・上書き）。
+#   push できるのは refs/heads/loop/* のみ。それ以外の宛先とブランチ削除は拒否する。
+#   base(main 等)への直 push を refspec の書き方によらず止めるのが目的。
+zero='0000000000000000000000000000000000000000'
+rc=0
+# `|| [ -n "$remoteref" ]` で最終行に改行が無くても取りこぼさない（git は改行終端だが保険）。
+while read -r _localref localsha remoteref _remotesha || [ -n "$remoteref" ]; do
+  [ -n "$remoteref" ] || continue
+  case "$remoteref" in
+    refs/heads/loop/*) ;;
+    *) echo "pre-push 拒否: '$remoteref' への push は禁止（loop/<id> のみ許可）" >&2; rc=1;;
+  esac
+  if [ "$localsha" = "$zero" ]; then
+    echo "pre-push 拒否: リモートブランチの削除は禁止（$remoteref）" >&2; rc=1
+  fi
+done
+exit $rc
+HOOK
+chmod +x "$_hookdir/hooks/pre-push"
+echo "✅ pre-push hook 設置: push は refs/heads/loop/* のみ許可"
+
 # ── 4) 権限とスキルを対象 repo の .claude/ に設置（Claude セッションがここを読む）──
 #   再実行で loop-task/loop-task と入れ子になるのを防ぐため一旦消してから cp（冪等）
 mkdir -p "$TARGET_REPO_DIR/.claude/skills"

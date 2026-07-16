@@ -34,6 +34,7 @@
     "deny": [
       "Bash(git push --force:*)",
       "Bash(git push -f:*)",
+      "Bash(git push --no-verify:*)",
       "Bash(git push origin main:*)",
       "Bash(git push origin master:*)",
       "Bash(gh pr merge:*)",
