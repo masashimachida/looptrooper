@@ -1,7 +1,12 @@
 FROM node:22-bookworm
 
-# Claude Code CLI
-RUN npm install -g @anthropic-ai/claude-code
+# Claude Code CLI ── バージョンを固定する（latest 追従にしない）。
+#   driver/keeper の生存・詰まり判定は pane の UI 文言（"esc to interrupt" 等）を読むので、
+#   CLI の UI 変更で偽 hung/偽 modal が静かに再発し得る。latest を毎ビルド取り込むと更新が
+#   暗黙に混入するため固定し、更新は ARG を上げる意図的な作業にする（loopctl upgrade 時に
+#   `--build-arg CLAUDE_CODE_VERSION=x.y.z` で明示、または下の既定値を上げてから再 build）。
+ARG CLAUDE_CODE_VERSION=2.1.211
+RUN npm install -g "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
 
 # ループに必要なツール（openssl は GitHub App の JWT 署名に使う）
 RUN apt-get update && apt-get install -y --no-install-recommends \
